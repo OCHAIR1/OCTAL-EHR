@@ -1,14 +1,27 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { supabase, signOut } from '../../lib/supabase'
 import { hashMatricNo } from '../../lib/crypto'
+import { searchCachedPatient, isOnline } from '../../lib/offline-cache'
 
 export default function StaffSearch() {
   const [query, setQuery] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
   const [notFound, setNotFound] = useState(false)
+  const [online, setOnline] = useState(navigator.onLine)
   const navigate = useNavigate()
+
+  useEffect(() => {
+    const goOnline = () => setOnline(true)
+    const goOffline = () => setOnline(false)
+    window.addEventListener('online', goOnline)
+    window.addEventListener('offline', goOffline)
+    return () => {
+      window.removeEventListener('online', goOnline)
+      window.removeEventListener('offline', goOffline)
+    }
+  }, [])
 
   const handleSearch = async (e) => {
     e.preventDefault()
@@ -21,30 +34,44 @@ export default function StaffSearch() {
     try {
       const hash = await hashMatricNo(query)
 
-      const { data, error: dbErr } = await supabase
-        .from('students')
-        .select('id, matric_no_enc, full_name_enc, blood_group, genotype, gender, department, faculty, level, status, photo_url_enc, profile_verified')
-        .eq('matric_no_hash', hash)
-        .not('status', 'in', '("deleted","pending_deletion")')
-        .single()
+      if (isOnline()) {
+        // ── ONLINE: Query Supabase (fresh) ──
+        const { data, error: dbErr } = await supabase
+          .from('students')
+          .select('id, matric_no_enc, full_name_enc, blood_group, genotype, gender, department, faculty, level, status, photo_url_enc, profile_verified, profile_open')
+          .eq('matric_no_hash', hash)
+          .not('status', 'in', '("deleted","pending_deletion")')
+          .single()
 
-      if (dbErr || !data) {
-        setNotFound(true)
-        return
+        if (dbErr || !data) {
+          setNotFound(true)
+          return
+        }
+
+        // Audit log
+        const user = (await supabase.auth.getUser()).data.user
+        await supabase.from('audit_log').insert({
+          actor_id: user?.id,
+          actor_role: 'staff',
+          action: 'VIEW_RECORD',
+          resource_type: 'students',
+          resource_id: data.id,
+          metadata: { search_query_hash: hash }
+        })
+
+        navigate(`/staff/patient/${data.id}`)
+      } else {
+        // ── OFFLINE: Query IndexedDB (cached) ──
+        const cached = await searchCachedPatient(hash)
+
+        if (!cached) {
+          setNotFound(true)
+          setError('You are offline and this patient has not been cached locally. Connect to the internet and search again.')
+          return
+        }
+
+        navigate(`/staff/patient/${cached.id}`)
       }
-
-      // Log access in audit trail
-      const user = (await supabase.auth.getUser()).data.user
-      await supabase.from('audit_log').insert({
-        actor_id: user?.id,
-        actor_role: 'staff',
-        action: 'VIEW_RECORD',
-        resource_type: 'students',
-        resource_id: data.id,
-        metadata: { search_query_hash: hash }
-      })
-
-      navigate(`/staff/patient/${data.id}`)
     } catch (err) {
       setError(err.message || 'Search failed.')
     } finally {
@@ -65,6 +92,13 @@ export default function StaffSearch() {
           <div className="header-sub">Medical Staff Dashboard</div>
         </div>
         <div className="header-actions">
+          {!online && (
+            <span style={{
+              fontSize: 10, fontWeight: 800, padding: '4px 10px',
+              background: 'var(--warn-bg)', color: 'var(--warn)',
+              borderRadius: 100, letterSpacing: 1, textTransform: 'uppercase'
+            }}>⚡ Offline</span>
+          )}
           <button className="btn-logout" onClick={handleLogout}>Logout</button>
         </div>
       </div>
@@ -73,6 +107,7 @@ export default function StaffSearch() {
         <h1 className="page-title">Patient Lookup</h1>
         <p className="page-desc">
           Enter a student's matric number to pull up their medical record.
+          {!online && <span style={{ color: 'var(--warn)', fontWeight: 600 }}> (Searching offline cache)</span>}
         </p>
 
         <form onSubmit={handleSearch}>
@@ -92,13 +127,13 @@ export default function StaffSearch() {
 
         {error && <div className="error-box">⚠ {error}</div>}
 
-        {notFound && (
+        {notFound && !error && (
           <div className="empty-state">
             <div className="empty-state-icon">🔍</div>
             <h3>No record found</h3>
             <p>
               No student found with matric number <strong>{query}</strong>.
-              Check the number and try again.
+              {!online ? ' This record may not be cached locally.' : ' Check the number and try again.'}
             </p>
           </div>
         )}

@@ -4,6 +4,7 @@ import { supabase } from '../../lib/supabase'
 import AllergyBanner from '../../components/AllergyBanner'
 import VisitHistory from './VisitHistory'
 import NewVisitForm from './NewVisitForm'
+import { cachePatientRecord, getCachedPatientFull, isOnline } from '../../lib/offline-cache'
 
 export default function PatientView() {
   const { id } = useParams()
@@ -16,50 +17,82 @@ export default function PatientView() {
   const [error, setError] = useState(null)
   const [showNewVisit, setShowNewVisit] = useState(false)
   const [visitRefreshKey, setVisitRefreshKey] = useState(0)
+  const [online, setOnline] = useState(navigator.onLine)
+  const [fromCache, setFromCache] = useState(false)
 
   useEffect(() => {
     loadPatient()
+    const goOnline = () => setOnline(true)
+    const goOffline = () => setOnline(false)
+    window.addEventListener('online', goOnline)
+    window.addEventListener('offline', goOffline)
+    return () => {
+      window.removeEventListener('online', goOnline)
+      window.removeEventListener('offline', goOffline)
+    }
   }, [id])
 
   const loadPatient = async () => {
     setLoading(true)
-    try {
-      // Fetch student
-      const { data: student, error: sErr } = await supabase
-        .from('students')
-        .select('*')
-        .eq('id', id)
-        .single()
-      if (sErr) throw sErr
-      setPatient(student)
+    setFromCache(false)
 
-      // Fetch allergies
-      const { data: allergyData } = await supabase
-        .from('allergies')
-        .select('*')
-        .eq('student_id', id)
-      setAllergies(allergyData || [])
+    if (isOnline()) {
+      try {
+        // ── ONLINE: Fetch from Supabase ──
+        const { data: student, error: sErr } = await supabase
+          .from('students')
+          .select('*')
+          .eq('id', id)
+          .single()
+        if (sErr) throw sErr
+        setPatient(student)
 
-      // Fetch medical history
-      const { data: histData } = await supabase
-        .from('medical_history')
-        .select('*')
-        .eq('student_id', id)
-      setHistory(histData || [])
+        const { data: allergyData } = await supabase
+          .from('allergies').select('*').eq('student_id', id)
+        setAllergies(allergyData || [])
 
-      // Fetch documents
-      const { data: docData } = await supabase
-        .from('documents')
-        .select('*')
-        .eq('student_id', id)
-        .order('created_at', { ascending: false })
-      setDocuments(docData || [])
+        const { data: histData } = await supabase
+          .from('medical_history').select('*').eq('student_id', id)
+        setHistory(histData || [])
 
-    } catch (err) {
-      setError(err.message)
-    } finally {
-      setLoading(false)
+        const { data: docData } = await supabase
+          .from('documents').select('*').eq('student_id', id)
+          .order('created_at', { ascending: false })
+        setDocuments(docData || [])
+
+        // Cache everything locally for offline use
+        try {
+          await cachePatientRecord({
+            student,
+            allergies: allergyData || [],
+            history: histData || [],
+            visits: [], // visits are loaded by VisitHistory component
+            documents: docData || []
+          })
+        } catch { /* indexedDB failure is non-fatal */ }
+
+      } catch (err) {
+        setError(err.message)
+      }
+    } else {
+      // ── OFFLINE: Load from IndexedDB ──
+      try {
+        const cached = await getCachedPatientFull(id)
+        if (cached.student) {
+          setPatient(cached.student)
+          setAllergies(cached.allergies || [])
+          setHistory(cached.history || [])
+          setDocuments(cached.documents || [])
+          setFromCache(true)
+        } else {
+          setError('This patient is not available offline. Connect to the internet to load their record.')
+        }
+      } catch (err) {
+        setError('Failed to load cached data: ' + err.message)
+      }
     }
+
+    setLoading(false)
   }
 
   const toggleProfileOpen = async (open) => {
@@ -148,6 +181,12 @@ export default function PatientView() {
           <div className="header-sub">Patient Record</div>
         </div>
         <div className="header-actions">
+          {fromCache && (
+            <span style={{ fontSize: 10, fontWeight: 800, padding: '4px 10px', background: 'var(--warn-bg)', color: 'var(--warn)', borderRadius: 100, letterSpacing: 1, textTransform: 'uppercase' }}>📦 Cached</span>
+          )}
+          {!online && (
+            <span style={{ fontSize: 10, fontWeight: 800, padding: '4px 10px', background: 'var(--warn-bg)', color: 'var(--warn)', borderRadius: 100, letterSpacing: 1, textTransform: 'uppercase' }}>⚡ Offline</span>
+          )}
           <button className="btn-logout" onClick={() => navigate('/staff/search')}>← Search</button>
         </div>
       </div>

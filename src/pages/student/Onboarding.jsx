@@ -3,7 +3,6 @@ import { useNavigate } from 'react-router-dom'
 import { supabase, getUser } from '../../lib/supabase'
 import { extractMedicalData } from '../../lib/gemini-extractor'
 import { hashMatricNo } from '../../lib/crypto'
-import FaceCapture from '../../components/FaceCapture'
 
 function StepDots({ current, total }) {
   return (
@@ -38,10 +37,6 @@ export default function StudentOnboarding() {
   const [user, setUser] = useState(null)
   const [matricNo, setMatricNo] = useState('')
 
-  // Face capture
-  const [faceBlob, setFaceBlob] = useState(null)
-  const [faceUrl, setFaceUrl] = useState(null)
-
   // Upload
   const [file, setFile] = useState(null)
   const [dragOver, setDragOver] = useState(false)
@@ -57,7 +52,7 @@ export default function StudentOnboarding() {
   const [consent, setConsent] = useState(false)
   const [submitting, setSubmitting] = useState(false)
 
-  const totalSteps = 5
+  const totalSteps = 4  // Upload → Verify → Consent → Done
 
   useEffect(() => {
     getUser().then(u => {
@@ -67,28 +62,7 @@ export default function StudentOnboarding() {
     })
   }, [navigate])
 
-  // ── Step 0: Face Capture ─────────────────────────────────
-  const renderFaceCapture = () => (
-    <>
-      <h1 className="page-title">Your Profile Photo</h1>
-      <p className="page-desc">
-        Take a clear photo of your face. This will be used as your medical ID
-        and <strong>cannot be changed</strong> after you submit your profile.
-      </p>
-      <FaceCapture
-        onCapture={(blob, url) => { setFaceBlob(blob); setFaceUrl(url) }}
-        locked={false}
-        existingPhoto={faceUrl}
-      />
-      <div className="btn-row">
-        <button className="btn-primary" disabled={!faceBlob} onClick={() => setStep(1)}>
-          Continue →
-        </button>
-      </div>
-    </>
-  )
-
-  // ── Step 1: Upload ───────────────────────────────────────
+  // ── Step 0: Upload ───────────────────────────────────────
   const handleFileDrop = useCallback((e) => {
     e.preventDefault()
     setDragOver(false)
@@ -105,7 +79,7 @@ export default function StudentOnboarding() {
       setExtracted(result.extracted)
       setExtractionResult(result)
       setProcessing(false)
-      setStep(2)
+      setStep(1)
     } catch (err) {
       setError(err.message)
       setProcessing(false)
@@ -141,7 +115,6 @@ export default function StudentOnboarding() {
         <button className="btn-primary" disabled={!file} onClick={handleExtract}>
           Scan with AI →
         </button>
-        <button className="btn-secondary" onClick={() => setStep(0)}>← Back</button>
       </div>
     </>
   )
@@ -157,7 +130,7 @@ export default function StudentOnboarding() {
     </div>
   )
 
-  // ── Step 2: Verify ───────────────────────────────────────
+  // ── Step 1: Verify ───────────────────────────────────────
   const renderVerify = () => {
     if (!extracted) return null
     const { personal, clinical, extraction_meta } = extracted
@@ -225,14 +198,14 @@ export default function StudentOnboarding() {
         <DataRow label="Phone" value={personal?.emergency_contact?.phone} />
 
         <div className="btn-row">
-          <button className="btn-primary" onClick={() => setStep(3)}>This looks correct →</button>
-          <button className="btn-secondary" onClick={() => setStep(1)}>← Re-upload document</button>
+          <button className="btn-primary" onClick={() => setStep(2)}>This looks correct →</button>
+          <button className="btn-secondary" onClick={() => setStep(0)}>← Re-upload document</button>
         </div>
       </>
     )
   }
 
-  // ── Step 3: Consent ──────────────────────────────────────
+  // ── Step 2: Consent ──────────────────────────────────────
   const handleSubmit = async () => {
     setSubmitting(true)
     setError(null)
@@ -240,16 +213,6 @@ export default function StudentOnboarding() {
     try {
       const matricHash = await hashMatricNo(matricNo)
       const { personal, clinical } = extracted
-
-      // Upload face photo to Supabase Storage
-      let photoPath = null
-      if (faceBlob) {
-        const photoName = `${matricHash}-face.webp`
-        const { error: uploadErr } = await supabase.storage
-          .from('profile-photos')
-          .upload(photoName, faceBlob, { contentType: 'image/webp', upsert: true })
-        if (!uploadErr) photoPath = photoName
-      }
 
       // Upload medical document
       let docPath = null
@@ -273,7 +236,6 @@ export default function StudentOnboarding() {
           phone_number_enc: personal?.phone_number || null,
           home_address_enc: personal?.home_address || null,
           email_enc: personal?.email || user.email,
-          photo_url_enc: photoPath,
           emergency_contact_enc: JSON.stringify(personal?.emergency_contact || {}),
           blood_group: clinical?.blood_group || 'unknown',
           genotype: clinical?.genotype || 'unknown',
@@ -339,7 +301,7 @@ export default function StudentOnboarding() {
         metadata: { matric_no_hash: matricHash }
       })
 
-      setStep(4)
+      setStep(3)
     } catch (err) {
       setError(err.message || 'Failed to save your record. Please try again.')
     } finally {
@@ -376,12 +338,12 @@ export default function StudentOnboarding() {
         <button className="btn-primary" disabled={!consent || submitting} onClick={handleSubmit}>
           {submitting ? 'Saving your record…' : 'Submit Medical Record'}
         </button>
-        <button className="btn-secondary" onClick={() => setStep(2)}>← Back</button>
+        <button className="btn-secondary" onClick={() => setStep(1)}>← Back</button>
       </div>
     </>
   )
 
-  // ── Step 4: Success ──────────────────────────────────────
+  // ── Step 3: Success ──────────────────────────────────────
   const renderSuccess = () => (
     <div className="centered-state">
       <div className="success-icon">✓</div>
@@ -418,15 +380,14 @@ export default function StudentOnboarding() {
         <div className="progress-fill" style={{ width: `${progressPct}%` }} />
       </div>
 
-      {step < 4 && <StepDots current={step} total={totalSteps} />}
+      {step < 3 && <StepDots current={step} total={totalSteps} />}
 
       <div className="content">
         {processing && renderProcessing()}
-        {!processing && step === 0 && renderFaceCapture()}
-        {!processing && step === 1 && renderUpload()}
-        {!processing && step === 2 && renderVerify()}
-        {!processing && step === 3 && renderConsent()}
-        {!processing && step === 4 && renderSuccess()}
+        {!processing && step === 0 && renderUpload()}
+        {!processing && step === 1 && renderVerify()}
+        {!processing && step === 2 && renderConsent()}
+        {!processing && step === 3 && renderSuccess()}
       </div>
 
       <div className="footer">
