@@ -62,6 +62,28 @@ export default function PatientView() {
     }
   }
 
+  const toggleProfileOpen = async (open) => {
+    const { error: toggleErr } = await supabase
+      .from('students')
+      .update({ profile_open: open, updated_at: new Date().toISOString() })
+      .eq('id', id)
+
+    if (!toggleErr) {
+      setPatient(prev => ({ ...prev, profile_open: open }))
+
+      // Audit log
+      const user = (await supabase.auth.getUser()).data.user
+      await supabase.from('audit_log').insert({
+        actor_id: user?.id,
+        actor_role: 'staff',
+        action: open ? 'PROFILE_OPENED' : 'PROFILE_CLOSED',
+        resource_type: 'students',
+        resource_id: id,
+        metadata: { profile_open: open }
+      })
+    }
+  }
+
   const downloadDoc = async (doc) => {
     const { data, error } = await supabase.storage
       .from('medical-documents')
@@ -161,6 +183,27 @@ export default function PatientView() {
                 <span>Status: <strong style={{ textTransform: 'capitalize' }}>{patient.status}</strong></span>
               </div>
             </div>
+          </div>
+
+          {/* Profile Open/Close Toggle */}
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: 16, padding: '12px 16px', background: patient.profile_open ? 'var(--warn-bg)' : 'var(--green-pale)', borderRadius: 'var(--radius)', border: `1.5px solid ${patient.profile_open ? 'var(--warn)' : 'var(--green-light)'}` }}>
+            <div>
+              <div style={{ fontSize: 11, fontWeight: 800, textTransform: 'uppercase', letterSpacing: 1, color: patient.profile_open ? 'var(--warn)' : 'var(--green)', marginBottom: 2 }}>
+                {patient.profile_open ? '🔓 Profile Open — Student can edit' : '🔒 Profile Locked — Read only'}
+              </div>
+              <div style={{ fontSize: 12, color: 'var(--muted)' }}>
+                {patient.profile_open ? 'Student can currently modify their profile data.' : 'Student cannot modify their profile until you re-open it.'}
+              </div>
+            </div>
+            {patient.profile_open ? (
+              <button onClick={() => toggleProfileOpen(false)} style={{ background: 'var(--warn)', color: 'white', border: 'none', padding: '8px 16px', borderRadius: 'var(--radius)', fontSize: 12, fontWeight: 700, cursor: 'pointer', fontFamily: "'Outfit', sans-serif", whiteSpace: 'nowrap' }}>
+                🔒 Close Profile
+              </button>
+            ) : (
+              <button onClick={() => toggleProfileOpen(true)} style={{ background: 'var(--green)', color: 'white', border: 'none', padding: '8px 16px', borderRadius: 'var(--radius)', fontSize: 12, fontWeight: 700, cursor: 'pointer', fontFamily: "'Outfit', sans-serif", whiteSpace: 'nowrap' }}>
+                🔓 Open for Edit
+              </button>
+            )}
           </div>
         </div>
 

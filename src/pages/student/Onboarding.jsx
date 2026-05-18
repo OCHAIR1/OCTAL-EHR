@@ -281,7 +281,8 @@ export default function StudentOnboarding() {
           ndpr_consent: true,
           ndpr_consent_at: new Date().toISOString(),
           ai_extraction_raw: extractionResult?.rawJson ? JSON.parse(extractionResult.rawJson) : null,
-          profile_verified: true
+          profile_verified: true,
+          profile_open: false  // auto-lock after first submission
         })
         .select('id')
         .single()
