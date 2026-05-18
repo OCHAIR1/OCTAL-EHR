@@ -2,6 +2,8 @@ import { useState, useEffect } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { supabase } from '../../lib/supabase'
 import AllergyBanner from '../../components/AllergyBanner'
+import VisitHistory from './VisitHistory'
+import NewVisitForm from './NewVisitForm'
 
 export default function PatientView() {
   const { id } = useParams()
@@ -12,6 +14,8 @@ export default function PatientView() {
   const [documents, setDocuments] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
+  const [showNewVisit, setShowNewVisit] = useState(false)
+  const [visitRefreshKey, setVisitRefreshKey] = useState(0)
 
   useEffect(() => {
     loadPatient()
@@ -190,6 +194,21 @@ export default function PatientView() {
             ))}
           </div>
         )}
+
+        {/* VISITS — Phase 2 */}
+        {showNewVisit ? (
+          <NewVisitForm
+            studentId={id}
+            onComplete={() => { setShowNewVisit(false); setVisitRefreshKey(k => k + 1) }}
+            onCancel={() => setShowNewVisit(false)}
+          />
+        ) : (
+          <button className="btn-primary" style={{ marginBottom: 16 }} onClick={() => setShowNewVisit(true)}>
+            + Log New Visit
+          </button>
+        )}
+
+        <VisitHistory studentId={id} refreshKey={visitRefreshKey} />
 
         {/* Documents */}
         <div className="card">
