@@ -1,468 +1,399 @@
-# CALUMED EHR — Complete Build Plan
+# OCTAL-EHR — Complete Build Plan
 
-> **Caleb University Medical Records System**
+> **Caleb University Health Center — Electronic Medical Records**
 > Author: Giant / TAI Team
 > Last Updated: May 18, 2026
 
 ---
 
-## System At a Glance
+## What This System Is
 
-| Layer | Technology | Purpose |
-|-------|-----------|---------|
-| Frontend (Student) | React / Mobile (Jojo) | Onboarding, document upload, profile view |
-| Frontend (Medics) | React Web Dashboard | Patient lookup, visit logging, prescriptions |
-| Backend | Supabase (PostgreSQL) | Auth, database, storage, edge functions |
-| AI Engine | Gemini 2.0 Flash | Medical document extraction → structured JSON |
-| Encryption | Supabase Vault (pgsodium) | Column-level PII encryption |
-| Hashing | pgcrypto (SHA-256) | Matric number lookup without exposing plaintext |
-| Scheduling | pg_cron | Automated 6-year retention + deletion |
-| Compliance | NDPR | Consent flows, audit trail, data retention |
+OCTAL-EHR is the digital medical records system for **Caleb University Health Center**.
+
+It has **two surfaces**:
+
+1. **Student Onboarding App** — student uploads their medical document from their doctor, AI scans it and builds their profile. Done once.
+2. **Medical Staff Dashboard** — the health center staff look up any student by matric number, view their full record, and log every clinic visit.
+
+**One login. One role. Medical staff only.**
+There is no multi-role hierarchy in this system. Every person who logs into the staff dashboard has full clinical access. Access is controlled at the Supabase Auth level — invite-only, managed by whoever runs this system.
+
+---
+
+## System Stack
+
+| Layer | Tool | Purpose |
+|-------|------|---------|
+| Student UI | React (mobile-first) | Onboarding flow — built in `student-onboarding.jsx` |
+| Staff Dashboard | React Web (desktop-first) | Patient lookup + clinical records |
+| Backend | Supabase (PostgreSQL) | Database, Auth, Storage, Edge Functions |
+| AI Extraction | Gemini 2.0 Flash | Reads uploaded medical docs → structured JSON |
+| Encryption | Supabase Vault (`pgsodium`) | Column-level PII encryption — built in `schema.sql` |
+| Lookup Hashing | `pgcrypto` SHA-256 | Search by matric number without storing it plain |
+| Retention Engine | `pg_cron` | Auto-delete records 6 years post-convocation |
+| Compliance | NDPR | Consent captured, audit trail, data lifecycle |
 
 ---
 
 ## Design System
 
 ```
-Primary:      #1B4332  (Deep Forest Green — medical authority, calm)
-Surface:      #F4F6F0  (Off-white, easy on the eyes)
-Text:         #0D1B0F  (Warm near-black)
-Accent:       #40916C  (Mid green for active states)
-Alert:        #C62828  (Red — allergies, critical warnings ONLY)
-Warning:      #E65100  (Orange — low confidence, review needed)
+Primary:     #1B4332   Deep Forest Green — authority, calm, medical
+Surface:     #F4F6F0   Off-white — easy on the eyes
+Text:        #0D1B0F   Warm near-black
+Accent:      #40916C   Active states, confirmations
+Alert:       #C62828   Red — ALLERGIES and critical warnings ONLY
+Warning:     #E65100   Orange — low confidence, review required
 
-Fonts:        DM Serif Display (headers) · Outfit (body) · DM Mono (IDs, codes)
-Corners:      4px standard · 8px cards
-Approach:     Minimalistically Bold — no gradients, no decorative elements
+Fonts:  DM Serif Display (headers)  ·  Outfit (body)  ·  DM Mono (IDs, codes)
+Style:  Minimalistically Bold — no gradients, no decoration, tables over cards
 ```
 
 ---
 
-## Role Hierarchy
+## Current File Inventory
 
-| Role | Read Records | Write Clinical | Prescribe | View Audit Log | Manage Staff |
-|------|:---:|:---:|:---:|:---:|:---:|
-| **Super Admin** | ✓ | ✓ | ✓ | ✓ | ✓ |
-| **Doctor** | ✓ | ✓ | ✓ | ✗ | ✗ |
-| **Nurse** | ✓ | ✓ (vitals, notes) | ✗ | ✗ | ✗ |
-| **Pharmacist** | ✓ (prescriptions only) | ✗ | Dispense only | ✗ | ✗ |
-| **Health Admin** | ✓ | ✗ | ✗ | ✓ | ✗ |
+| File | What It Does | State |
+|------|-------------|-------|
+| `frontend/schema.sql` | Full Supabase database schema — all tables, RLS, indexes, cron job, encryption key setup | ✅ Built |
+| `frontend/gemni-extractor.js` | Gemini 2.0 Flash extraction service — takes uploaded file, returns structured medical JSON | ✅ Built |
+| `frontend/student-onboarding.jsx` | 4-step student onboarding UI — identity → upload → AI verify → consent → submit | ✅ Built |
+
+These three files are the foundation. Every phase builds on top of them.
 
 ---
 
-# PHASE 1 — Foundation & Student Onboarding
+# PHASE 1 — Connect & Launch Student Onboarding
 
-> **Goal**: Students can upload medical documents, AI extracts their data, and verified profiles are securely stored in Supabase.
+> **Goal**: Make the existing student onboarding fully functional. Wire the built UI to a live Supabase project and Gemini API. Students at Caleb University can register their medical profiles.
 
 ### What Gets Built
 
-| Component | File/Location | Status |
-|-----------|--------------|--------|
-| Supabase schema (all tables, RLS, indexes) | `frontend/schema.sql` | ✅ Built |
-| Gemini Flash extraction service | `frontend/gemni-extractor.js` | ✅ Built |
-| Student onboarding UI (4-step flow) | `frontend/student-onboarding.jsx` | ✅ Built |
-| Supabase project setup | Supabase Dashboard | ⬜ Not started |
-| Storage buckets (`medical-documents`, `profile-photos`) | Supabase Dashboard | ⬜ Not started |
-| Vault encryption key creation | Supabase SQL Editor | ⬜ Not started |
-| Connect extractor to live Gemini API | `gemni-extractor.js` | ⬜ Not started |
-| Connect onboarding UI to Supabase inserts | `student-onboarding.jsx` | ⬜ Not started |
-| Student auth (Supabase Auth — email/password) | New file | ⬜ Not started |
+| Task | File | Status |
+|------|------|--------|
+| Create Supabase project (Pro plan recommended) | Supabase Dashboard | ⬜ |
+| Run `schema.sql` in Supabase SQL Editor | `frontend/schema.sql` | ⬜ |
+| Create Vault encryption key (`octal_ehr_pii_key`) | Supabase SQL Editor | ⬜ |
+| Create storage buckets: `medical-documents`, `profile-photos` | Supabase Dashboard | ⬜ |
+| Wire `gemni-extractor.js` to live Gemini API key | `frontend/gemni-extractor.js` | ⬜ |
+| Replace mock data in onboarding with real Gemini call | `frontend/student-onboarding.jsx` | ⬜ |
+| Connect verified form submission to Supabase inserts | `frontend/student-onboarding.jsx` | ⬜ |
+| Student auth (Supabase Auth email/password) | New: `auth.js` | ⬜ |
+| Deploy student app (Vercel / Netlify) | CI/CD | ⬜ |
 
-### Data Flow
+### Student Onboarding Data Flow
 
 ```
-Student opens app
+Student opens app (Caleb University student)
     │
     ▼
-┌─────────────────────┐
-│ Step 1: Identity     │  Matric Number + Full Name
-└──────────┬──────────┘
-           │
-           ▼
-┌─────────────────────┐
-│ Step 2: Upload       │  PDF / Image (max 10MB)
-└──────────┬──────────┘
-           │
-           ▼
-┌─────────────────────────────────────────┐
-│ Step 2b: AI Processing                  │
-│                                         │
-│  File → Base64 → Gemini 2.0 Flash      │
-│  Gemini → Structured JSON              │
-│  ┌─────────────────────────────────┐    │
-│  │ personal: name, DOB, contact   │    │
-│  │ clinical: blood, geno, allergy │    │
-│  │ document_meta: type, facility  │    │
-│  │ extraction_meta: confidence    │    │
-│  └─────────────────────────────────┘    │
-└──────────┬──────────────────────────────┘
-           │
-           ▼
-┌─────────────────────┐
-│ Step 3: Verify       │  Student reviews AI output
-│                      │  Corrects errors manually
-│                      │  Low-confidence fields flagged ⚠
-└──────────┬──────────┘
-           │
-           ▼
-┌─────────────────────┐
-│ Step 4: Consent      │  NDPR consent checkbox
-│ + Submit             │  "I authorize storage of my health data..."
-└──────────┬──────────┘
-           │
-           ▼
-┌─────────────────────────────────────────┐
-│ Secure Storage                          │
-│                                         │
-│  1. SHA-256(matric_no) → matric_no_hash │
-│  2. Vault.encrypt(PII) → _enc columns  │
-│  3. INSERT → students table             │
-│  4. INSERT → allergies table            │
-│  5. INSERT → medical_history table      │
-│  6. Upload file → Storage bucket        │
-│  7. INSERT → documents table            │
-│  8. INSERT → audit_log                  │
-└─────────────────────────────────────────┘
+┌────────────────────────────────────┐
+│ Step 1 — Identity                  │
+│ Enter Matric Number + Full Name    │
+│ (validated format: XXX/YYYY/NNN)   │
+└──────────────┬─────────────────────┘
+               │
+               ▼
+┌────────────────────────────────────┐
+│ Step 2 — Upload Medical Document   │
+│ PDF, JPG, PNG — max 10MB           │
+│ (doctor's letter, lab result, etc) │
+└──────────────┬─────────────────────┘
+               │
+               ▼
+┌────────────────────────────────────────────────┐
+│ Gemini 2.0 Flash — AI Extraction               │
+│ (gemni-extractor.js)                           │
+│                                                │
+│  File → Base64 → Gemini API                    │
+│  Returns JSON:                                 │
+│   personal { name, DOB, phone, address }       │
+│   clinical { blood_group, genotype, allergies, │
+│              medical_history, vaccinations }    │
+│   extraction_meta { confidence, low_fields }   │
+└──────────────┬─────────────────────────────────┘
+               │
+               ▼
+┌────────────────────────────────────┐
+│ Step 3 — Verify                    │
+│ Student reviews every field        │
+│ ⚠ Low-confidence fields flagged   │
+│ Student corrects if needed         │
+└──────────────┬─────────────────────┘
+               │
+               ▼
+┌────────────────────────────────────┐
+│ Step 4 — NDPR Consent + Submit     │
+│ Checkbox required before saving    │
+└──────────────┬─────────────────────┘
+               │
+               ▼
+┌────────────────────────────────────────────────┐
+│ Secure Save to Supabase                        │
+│                                                │
+│  1. SHA-256(matric_no)  → matric_no_hash       │
+│  2. Vault.encrypt(PII)  → _enc columns         │
+│  3. INSERT → students                          │
+│  4. INSERT → allergies (each one)              │
+│  5. INSERT → medical_history                   │
+│  6. Upload file → medical-documents bucket     │
+│  7. INSERT → documents (with ai_raw_json)      │
+│  8. INSERT → audit_log (action: ONBOARD)       │
+└────────────────────────────────────────────────┘
 ```
 
-### Database Tables Used
+### Key Security Rules (from `schema.sql`)
 
-- `students` — core encrypted profile
-- `allergies` — linked allergy records
-- `medical_history` — pre-existing conditions
-- `documents` — uploaded file metadata + AI raw JSON
-- `audit_log` — record creation logged
-
-### Security in Phase 1
-
-- **Encryption**: All PII columns use Supabase Vault (`calumed_pii_key`)
-- **Hashing**: Matric number stored as SHA-256 hash for search
-- **RLS**: Students can only read their own row
-- **Consent**: NDPR consent timestamp recorded before any data is saved
-- **File validation**: Only PDF/JPG/PNG/WEBP accepted, max 10MB
+- Matric number **never stored plaintext** — SHA-256 hash only
+- PII columns (`full_name_enc`, `matric_no_enc`, `date_of_birth_enc`, etc.) encrypted by Supabase Vault
+- Students can **only read their own row** (RLS policy)
+- NDPR consent timestamp required before any INSERT
+- Uploaded files stored in private bucket — not publicly accessible
 
 ---
 
-# PHASE 2 — Medics Dashboard & Clinical Core
+# PHASE 2 — Medical Staff Dashboard
 
-> **Goal**: Health center staff can look up students, view their full medical profile, and log clinical encounters (visits, vitals, diagnosis, prescriptions).
+> **Goal**: Caleb University health center staff can log in, look up any student by matric number, see their full medical profile, and record every clinic visit.
 
 ### What Gets Built
 
-| Component | Description | Status |
-|-----------|------------|--------|
-| Medics web dashboard | React web app — desktop-first | ⬜ Not started |
-| Matric number search | Hash-based lookup via `lookup_student_by_matric()` | ⬜ Not started |
-| Patient overview card | Allergies banner (top), blood group, genotype, history | ⬜ Not started |
-| Visit/encounter form | Log complaint, vitals, diagnosis, treatment notes | ⬜ Not started |
-| Vitals entry | BP, temperature, weight, height, pulse | ⬜ Not started |
-| Prescription recording | Drug, dosage, duration, dispensed_by | ⬜ Not started |
-| Document download | Medics can download original uploaded docs | ⬜ Not started |
-| Staff auth | Supabase Auth — invite-only for medics | ⬜ Not started |
-| Audit trail (auto) | Every record view/edit logged automatically | ⬜ Not started |
+| Task | Description | Status |
+|------|------------|--------|
+| Staff login page | Supabase Auth — invite-only, single shared role | ⬜ |
+| Matric number search | Hashed lookup → decrypt → display patient card | ⬜ |
+| Patient overview card | Photo, name, blood group, genotype, allergies banner | ⬜ |
+| Allergy banner (always top) | Red/orange badges — cannot be hidden | ⬜ |
+| Visit history table | All past visits — date, complaint, staff, status | ⬜ |
+| New visit form | Complaint, vitals, diagnosis, notes | ⬜ |
+| Document viewer + download | View and download original uploaded medical docs | ⬜ |
+| Auto audit logging | Every record view/edit → written to `audit_log` | ⬜ |
 
-### New Tables Required
+### Additional Tables Needed
 
 ```sql
--- VITALS (linked to each visit)
+-- VITALS (per visit)
 CREATE TABLE vitals (
-    id              UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    visit_id        UUID NOT NULL REFERENCES visits(id) ON DELETE CASCADE,
-    blood_pressure  TEXT,          -- e.g. "120/80"
-    temperature     DECIMAL(4,1),  -- °C
-    weight          DECIMAL(5,1),  -- kg
-    height          DECIMAL(5,1),  -- cm
-    pulse           INTEGER,       -- bpm
+    id               UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    visit_id         UUID NOT NULL REFERENCES visits(id) ON DELETE CASCADE,
+    blood_pressure   TEXT,           -- "120/80"
+    temperature      DECIMAL(4,1),   -- °C
+    weight           DECIMAL(5,1),   -- kg
+    height           DECIMAL(5,1),   -- cm
+    pulse            INTEGER,        -- bpm
     respiratory_rate INTEGER,
-    notes_enc       TEXT,          -- encrypted
-    recorded_by     UUID REFERENCES staff(id),
-    created_at      TIMESTAMPTZ DEFAULT NOW()
+    recorded_by      UUID REFERENCES staff(id),
+    created_at       TIMESTAMPTZ DEFAULT NOW()
 );
 
--- DIAGNOSES (linked to each visit)
+-- DIAGNOSES (per visit)
 CREATE TABLE diagnoses (
     id              UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     visit_id        UUID NOT NULL REFERENCES visits(id) ON DELETE CASCADE,
-    icd_code        TEXT,          -- ICD-10 code if applicable
-    description_enc TEXT NOT NULL, -- encrypted diagnosis
-    notes_enc       TEXT,          -- encrypted clinical notes
+    icd_code        TEXT,            -- optional ICD-10
+    description_enc TEXT NOT NULL,   -- encrypted
+    notes_enc       TEXT,            -- encrypted
     diagnosed_by    UUID REFERENCES staff(id),
     created_at      TIMESTAMPTZ DEFAULT NOW()
 );
 
--- PRESCRIPTIONS (linked to each visit)
+-- PRESCRIPTIONS (per visit)
 CREATE TABLE prescriptions (
-    id              UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    visit_id        UUID NOT NULL REFERENCES visits(id) ON DELETE CASCADE,
-    drug_enc        TEXT NOT NULL, -- encrypted drug name
-    dosage          TEXT,
-    duration        TEXT,
-    frequency       TEXT,
-    prescribed_by   UUID REFERENCES staff(id),
-    dispensed_by    UUID REFERENCES staff(id),
-    dispensed_at    TIMESTAMPTZ,
-    status          TEXT DEFAULT 'prescribed'
-        CHECK (status IN ('prescribed', 'dispensed', 'cancelled')),
-    created_at      TIMESTAMPTZ DEFAULT NOW()
+    id            UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    visit_id      UUID NOT NULL REFERENCES visits(id) ON DELETE CASCADE,
+    drug_enc      TEXT NOT NULL,     -- encrypted drug name
+    dosage        TEXT,
+    frequency     TEXT,
+    duration      TEXT,
+    prescribed_by UUID REFERENCES staff(id),
+    created_at    TIMESTAMPTZ DEFAULT NOW()
 );
 ```
 
-### Medics Dashboard Layout
+### Staff Dashboard Layout
 
 ```
 ┌──────────────────────────────────────────────────────────┐
-│  CALUMED                              Dr. Emeka ▾  [🔔] │
+│  OCTAL-EHR                    Caleb University  [Logout] │
 │  ELECTRONIC HEALTH RECORDS                               │
 ├──────────────────────────────────────────────────────────┤
 │                                                          │
-│  ┌────────────────────────────────────────────┐          │
-│  │ 🔍  Enter Matric Number    [SEARCH]        │          │
-│  └────────────────────────────────────────────┘          │
+│  ┌──────────────────────────────────────────────────┐    │
+│  │  🔍  Enter Matric Number             [ SEARCH ]  │    │
+│  └──────────────────────────────────────────────────┘    │
 │                                                          │
-│  ┌────────────────────────────────────────────────────┐  │
-│  │ 🔴 ALLERGIES: Penicillin (SEVERE) · Ibuprofen     │  │
-│  └────────────────────────────────────────────────────┘  │
+│  ┌──────────────────────────────────────────────────┐    │
+│  │  🔴  ALLERGIES: Penicillin (SEVERE) · Ibuprofen  │    │
+│  └──────────────────────────────────────────────────┘    │
 │                                                          │
-│  ┌──────────────┐  ┌──────────────────────────────────┐  │
-│  │ PHOTO        │  │ ADAEZE CHIOMA OKAFOR             │  │
-│  │              │  │ CSC/2021/001                     │  │
-│  │              │  │ Blood: O+  ·  Genotype: AS      │  │
-│  │              │  │ Level: 300L · Dept: Comp Science │  │
-│  └──────────────┘  └──────────────────────────────────┘  │
+│  ┌────────────┐  ┌──────────────────────────────────┐    │
+│  │  [PHOTO]   │  │  ADAEZE CHIOMA OKAFOR            │    │
+│  │            │  │  CSC/2021/001                    │    │
+│  │            │  │  Blood Group: O+  · Genotype: AS │    │
+│  └────────────┘  │  Level: 300L · Dept: Comp Sci    │    │
+│                  └──────────────────────────────────┘    │
 │                                                          │
-│  ── VISIT HISTORY ──────────────────────────────────── │  │
-│  │ 2026-05-10 │ Headache, Malaria │ Dr. Eze │ Closed │  │
-│  │ 2026-03-22 │ Sprained ankle    │ Nurse A │ Closed │  │
-│  │ 2026-01-15 │ Routine checkup   │ Dr. Eze │ Closed │  │
+│  ── VISIT HISTORY ────────────────────────────────────   │
+│  2026-05-10 │ Headache, suspected malaria  │ Closed      │
+│  2026-03-22 │ Sprained ankle              │ Closed      │
+│  2026-01-15 │ Routine checkup             │ Closed      │
 │                                                          │
-│  [ + New Visit ]    [ 📄 Documents ]    [ Referral ]     │
+│  [ + Log New Visit ]          [ 📄 View Documents ]      │
 └──────────────────────────────────────────────────────────┘
 ```
 
-### Allergy Display Rule (Non-Negotiable)
+### Allergy Rule — Non-Negotiable
 
-> **Allergies are ALWAYS visible at the top of every patient view.**
-> A `life_threatening` or `severe` allergy shows a red banner.
-> A `moderate` allergy shows an orange badge.
-> This is a patient safety requirement — it cannot be hidden, collapsed, or scrolled past.
+> Allergies are **always** at the very top of every patient card.
+> `life_threatening` / `severe` → solid red banner.
+> `moderate` → orange badge.
+> This cannot be collapsed, hidden, or scrolled past. It is a patient safety feature.
 
 ---
 
-# PHASE 3 — Referrals, Advanced Roles & Offline Sync
+# PHASE 3 — Referrals, Offline & Clinic Polish
 
-> **Goal**: Referral tracking, proper role-based workflows (doctor vs nurse vs pharmacist), and offline-first capability for the clinic.
+> **Goal**: Track external referrals, allow the clinic to function without internet, and add an emergency QR card per student.
 
 ### What Gets Built
 
-| Component | Description | Status |
-|-----------|------------|--------|
-| Referral tracking | Log external referrals (LUTH, specialists) + outcomes | ⬜ Not started |
-| Role-based UI views | Doctor sees full dashboard; Nurse sees vitals form; Pharmacist sees prescriptions only | ⬜ Not started |
-| Offline mode (medics) | Full read/write offline → sync on reconnect | ⬜ Not started |
-| Emergency QR card | Printable QR per student → scans to pull record | ⬜ Not started |
-| Dispensary module | Pharmacist marks prescriptions as dispensed | ⬜ Not started |
+| Task | Description | Status |
+|------|------------|--------|
+| Referral logging | Record when a student is sent to LUTH or a specialist | ⬜ |
+| Referral outcome tracking | Update when outcome is known | ⬜ |
+| Offline mode (PWA) | Full read/write offline, sync on reconnect | ⬜ |
+| Emergency QR card | Printable QR per student — scans to pull record | ⬜ |
 
-### New Table Required
+### Referrals Table
 
 ```sql
--- REFERRALS (linked to visit or standalone)
 CREATE TABLE referrals (
     id              UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     student_id      UUID NOT NULL REFERENCES students(id) ON DELETE CASCADE,
     visit_id        UUID REFERENCES visits(id) ON DELETE SET NULL,
-    referred_to_enc TEXT NOT NULL,  -- encrypted: hospital/specialist name
-    reason_enc      TEXT NOT NULL,  -- encrypted: reason for referral
-    outcome_enc     TEXT,           -- encrypted: what happened
+    referred_to_enc TEXT NOT NULL,   -- encrypted hospital/specialist
+    reason_enc      TEXT NOT NULL,   -- encrypted reason
+    outcome_enc     TEXT,            -- encrypted outcome
     status          TEXT DEFAULT 'pending'
         CHECK (status IN ('pending', 'completed', 'cancelled', 'no_show')),
     referred_by     UUID REFERENCES staff(id),
     referred_date   DATE DEFAULT CURRENT_DATE,
     outcome_date    DATE,
-    created_at      TIMESTAMPTZ DEFAULT NOW(),
-    updated_at      TIMESTAMPTZ DEFAULT NOW()
+    created_at      TIMESTAMPTZ DEFAULT NOW()
 );
 ```
 
-### Offline Architecture
+### Offline Flow
 
 ```
-┌─────────────────────────┐
-│   MEDICS DASHBOARD      │
-│   (Browser/PWA)         │
-│                         │
-│  ┌───────────────────┐  │         ┌──────────────────┐
-│  │ IndexedDB Cache   │◄─┼── sync ─┤  Supabase Cloud  │
-│  │ (local copy)      │──┼── sync ─►  (source of truth)│
-│  └───────────────────┘  │         └──────────────────┘
-│                         │
-│  • Read: local first    │
-│  • Write: queue locally │
-│  • Sync: on reconnect   │
-│  • Conflict: server wins│
-└─────────────────────────┘
+Clinic has no internet
+        │
+        ▼
+Dashboard reads from local IndexedDB cache
+Staff logs visit → saved locally, marked "pending sync"
+        │
+Internet restored
+        │
+        ▼
+Background sync sends queued writes to Supabase
+Conflicts: server version wins
 ```
 
 ---
 
-# PHASE 4 — Compliance, Retention & Admin Dashboard
+# PHASE 4 — Compliance, Retention & Administration
 
-> **Goal**: NDPR compliance flows, automated data retention/deletion, admin analytics, and data export capabilities.
+> **Goal**: Automated 6-year data retention, admin controls, NDPR compliance enforcement, deletion warning emails, legal hold override.
 
 ### What Gets Built
 
-| Component | Description | Status |
-|-----------|------------|--------|
-| pg_cron retention engine | Nightly job: flag → warn → delete after 6 years | ✅ Defined in schema |
-| Admin dashboard | View retention queue, access reports, system health | ⬜ Not started |
-| 30-day deletion warning emails | Edge Function → email before auto-delete | ⬜ Not started |
-| Legal hold override | Admin can freeze a record from deletion | ⬜ Not started |
-| Student data export | Student can export their own records (NDPR right) | ⬜ Not started |
-| Storage file cleanup | Edge Function deletes actual files when student deleted | ⬜ Not started |
-| Audit log viewer | Admin can search/filter access logs | ⬜ Not started |
-| Convocation handshake | Mark students as "alumni" (manual or registry API) | ⬜ Not started |
+| Task | Description | Status |
+|------|------------|--------|
+| `pg_cron` nightly retention job | Already in `schema.sql` — just needs enabling | ✅ Defined |
+| 30-day deletion warning email | Supabase Edge Function → sends email to system admin | ⬜ |
+| Admin panel | View pending deletions, access logs, system health | ⬜ |
+| Legal hold flag | Prevent a specific record from being auto-deleted | ⬜ |
+| Convocation trigger | Mark student as `alumni` → starts 6-year clock | ⬜ |
+| File purge Edge Function | Deletes actual files from Storage when student is deleted | ⬜ |
+| Student data export | Student can download their own records (NDPR right) | ⬜ |
 
 ### Retention Lifecycle
 
 ```
-YEAR 0          Student enrolls → status = 'active'
-                Record created, NDPR consent stored
-                    │
-YEAR 4-5        Student convocates
-                Admin sets → status = 'alumni'
-                convocation_date recorded
-                scheduled_delete_at = convocation_date + 6 years
-                    │
-YEAR 10-11      scheduled_delete_at approaching
-                    │
-                    ▼
-            ┌───────────────────────────────────┐
-            │ pg_cron nightly @ 2:00 AM WAT     │
-            │                                   │
-            │ 30 days before delete_at:         │
-            │   → status = 'pending_deletion'   │
-            │   → email alert to admin          │
-            │                                   │
-            │ On delete_at:                     │
-            │   → DELETE FROM students (CASCADE)│
-            │   → Edge Function purges files    │
-            │                                   │
-            │ Audit logs retained 2 extra years │
-            └───────────────────────────────────┘
-```
+Year 0        Student enrols at Caleb University
+              Medical profile created → status = 'active'
+              NDPR consent timestamp recorded
 
-### Legal Hold Flow
+Year 4–5      Student graduates / convocates
+              Admin marks → status = 'alumni'
+              convocation_date set → scheduled_delete_at = convocation_date + 6 years
 
-```
-Admin identifies record that must NOT be auto-deleted
-    │
-    ▼
-Admin clicks "Legal Hold" on the patient card
-    │
-    ▼
-System sets:
-    status = 'active'  (overrides 'pending_deletion')
-    legal_hold = TRUE
-    legal_hold_reason = "..."
-    legal_hold_by = admin UUID
-    │
-    ▼
-pg_cron skips records where legal_hold = TRUE
-    │
-    ▼
-Admin releases hold when resolved → normal retention resumes
+Year 10–11    pg_cron job fires nightly @ 2:00 AM WAT
+
+              30 days before scheduled_delete_at:
+                → status = 'pending_deletion'
+                → Email alert sent to system admin
+
+              On scheduled_delete_at:
+                → DELETE FROM students  (CASCADE wipes all linked records)
+                → Edge Function purges files from Storage bucket
+                → Audit logs retained for 2 more years then purged
 ```
 
 ---
 
-# PHASE 5 — Intelligence, Biometrics & Integration
+# PHASE 5 — Intelligence & Future Features
 
-> **Goal**: Face scan verification (V2), school registry integration, analytics intelligence, and production hardening.
+> **Goal**: Face scan check-in (V2), Caleb University registry integration, visit analytics, production hardening.
 
 ### What Gets Built
 
-| Component | Description | Status |
-|-----------|------------|--------|
-| Face scan verification | Match student's face to stored photo at clinic check-in | ⬜ Not started (V2) |
-| School registry integration | Cross-verify matric numbers against official student database | ⬜ Not started |
-| Emergency access flow | Pull records by photo/QR when student is unconscious | ⬜ Not started |
-| Analytics dashboard | Visit trends, common diagnoses, allergy prevalence | ⬜ Not started |
-| Multi-campus support | Extend to satellite clinics if applicable | ⬜ Not started |
-| Production hardening | Rate limiting, DDoS protection, monitoring, backups | ⬜ Not started |
-| Mobile app (student) | Hand off to Jojo for native mobile implementation | ⬜ Not started |
+| Task | Description | Status |
+|------|------------|--------|
+| Face scan check-in | Match face at clinic → pull record automatically | ⬜ V2 |
+| Caleb registry integration | Validate matric numbers against school student DB | ⬜ |
+| Visit analytics | Common diagnoses, allergy trends, visit volume by month | ⬜ |
+| Production hardening | Rate limiting, backups, monitoring, uptime alerts | ⬜ |
 
-### Face Scan Architecture (V2)
-
-```
-Student arrives at clinic
-    │
-    ▼
-┌─────────────────────────────┐
-│ Clinic tablet camera        │
-│ captures face               │
-└──────────┬──────────────────┘
-           │
-           ▼
-┌─────────────────────────────┐
-│ Face embedding generated    │
-│ (on-device or Gemini API)   │
-└──────────┬──────────────────┘
-           │
-           ▼
-┌─────────────────────────────┐
-│ Compare against stored      │
-│ photo_url_enc → decrypt     │
-│ → generate embedding        │
-│ → cosine similarity match   │
-└──────────┬──────────────────┘
-           │
-           ▼
-    Match found? → Pull record
-    No match?   → Fall back to matric number search
-```
-
-> **Note**: No schema changes needed for V2 face scan. The `photo_url_enc` column captured during Phase 1 onboarding already stores the reference image.
+> **Face scan note**: No schema changes needed. `photo_url_enc` is already captured during Phase 1 onboarding. V2 adds a matching layer on top.
 
 ---
 
 # Phase Summary
 
-| Phase | Name | Depends On | Core Deliverable |
-|:-----:|------|:----------:|------------------|
-| **1** | Foundation & Onboarding | — | Students can register via AI-powered doc scan |
-| **2** | Medics Dashboard & Clinical Core | Phase 1 | Staff can look up patients and log visits |
-| **3** | Referrals, Roles & Offline | Phase 2 | Role-specific views, referral tracking, offline |
-| **4** | Compliance & Admin | Phase 1-3 | Retention engine, audit viewer, legal holds |
-| **5** | Intelligence & Biometrics | Phase 1-4 | Face scan, analytics, registry integration |
+| # | Phase | Core Deliverable |
+|:-:|-------|-----------------|
+| **1** | Connect & Launch | Students register at Caleb University via AI doc scan |
+| **2** | Staff Dashboard | Health center staff look up patients and log visits |
+| **3** | Referrals & Offline | External referrals tracked, clinic works offline |
+| **4** | Compliance & Admin | 6-year retention automated, admin controls live |
+| **5** | Intelligence | Face scan, registry integration, analytics |
 
 ---
 
-# Open Questions (To Be Answered Before Each Phase)
+# Open Questions — Answer Before Building Each Phase
 
-### Before Phase 1
-- [ ] Has the Supabase project been created? (Free or Pro plan?)
-- [ ] Do we have a Gemini API key provisioned?
-- [ ] Is Jojo building the mobile app separately, or is this Phase 1 UI also the student app?
+### Phase 1
+- [ ] Supabase project created? (Pro plan — $25/month for 10k+ students)
+- [ ] Gemini API key ready?
+- [ ] Who deploys the student app — same person or Jojo?
 
-### Before Phase 2
-- [ ] Does the health center have a dispensary/pharmacy?
-- [ ] How many staff accounts need to be seeded initially?
-- [ ] Do nurses have a separate login or shared station?
+### Phase 2
+- [ ] How many staff need initial login accounts?
+- [ ] Do staff use a shared station or individual logins?
 
-### Before Phase 3
-- [ ] What hospitals does the school commonly refer to?
-- [ ] Does the clinic have reliable internet, or is offline mode critical from day one?
-- [ ] Should QR cards be physical (printed) or digital (in-app)?
+### Phase 3
+- [ ] Does the clinic have reliable internet day-to-day?
+- [ ] Should the QR card be printed per student or just digital?
 
-### Before Phase 4
-- [ ] Who has authority to trigger convocation status changes?
-- [ ] Does the school registry have an API, or is it a manual CSV upload?
-- [ ] Who receives the 30-day deletion warning emails?
+### Phase 4
+- [ ] Who is responsible for marking students as graduated ("alumni")?
+- [ ] Who gets the 30-day deletion warning email?
 
-### Before Phase 5
-- [ ] Budget for face recognition API (if using cloud) vs on-device?
-- [ ] Is multi-campus actually needed or future scope?
-- [ ] Who maintains the system after handover?
+### Phase 5
+- [ ] Is Caleb University student database accessible via API or export?
+- [ ] Who maintains the system long-term after handover?
 
 ---
 
-> **Next Step**: Confirm Phase 1 plan details, and we begin building.
+> **We build in order. Phase 1 first. Every line of code from here maps to the 3 files already in the repo.**
