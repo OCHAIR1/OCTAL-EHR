@@ -228,6 +228,36 @@ export default function StudentDashboard() {
           </div>
         )}
 
+        {/* ── Current Medications ── */}
+        {(() => {
+          const raw = student.ai_extraction_raw
+          const meds = typeof raw === 'string' ? JSON.parse(raw)?.clinical?.current_medications : raw?.clinical?.current_medications
+          if (!meds || meds.length === 0) return null
+          return (
+            <div className="card">
+              <div className="section-label" style={{ margin: '0 0 12px' }}>Current Medications</div>
+              {meds.map((m, i) => (
+                <DataRow key={i} label={m.drug} value={[m.dosage, m.frequency].filter(Boolean).join(' · ') || '—'} />
+              ))}
+            </div>
+          )
+        })()}
+
+        {/* ── Vaccinations ── */}
+        {(() => {
+          const raw = student.ai_extraction_raw
+          const vax = typeof raw === 'string' ? JSON.parse(raw)?.clinical?.vaccinations : raw?.clinical?.vaccinations
+          if (!vax || vax.length === 0) return null
+          return (
+            <div className="card">
+              <div className="section-label" style={{ margin: '0 0 12px' }}>Vaccinations</div>
+              {vax.map((v, i) => (
+                <DataRow key={i} label={v.vaccine} value={v.date || 'Date not specified'} />
+              ))}
+            </div>
+          )
+        })()}
+
         {/* ── Visit History ── */}
         <div className="card">
           <div className="section-label" style={{ margin: '0 0 12px' }}>
@@ -305,7 +335,7 @@ export default function StudentDashboard() {
                     {doc.original_filename || 'Document'}
                   </div>
                   <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 2 }}>
-                    {doc.document_type} · {doc.ai_confidence ? `${Math.round(doc.ai_confidence * 100)}% confidence` : '—'}
+                    {doc.document_type} · {doc.file_size_bytes ? `${Math.round(doc.file_size_bytes / 1024)}KB` : '—'}
                   </div>
                 </div>
               </div>

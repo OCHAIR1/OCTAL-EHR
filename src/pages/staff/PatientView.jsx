@@ -321,6 +321,36 @@ export default function PatientView() {
           </div>
         )}
 
+        {/* Current Medications — from extraction data */}
+        {(() => {
+          const raw = patient.ai_extraction_raw
+          const meds = typeof raw === 'string' ? JSON.parse(raw)?.clinical?.current_medications : raw?.clinical?.current_medications
+          if (!meds || meds.length === 0) return null
+          return (
+            <div className="card">
+              <div className="section-label" style={{ margin: '0 0 12px' }}>Current Medications</div>
+              {meds.map((m, i) => (
+                <DataRow key={i} label={m.drug} value={[m.dosage, m.frequency].filter(Boolean).join(' · ') || '—'} />
+              ))}
+            </div>
+          )
+        })()}
+
+        {/* Vaccinations — from extraction data */}
+        {(() => {
+          const raw = patient.ai_extraction_raw
+          const vax = typeof raw === 'string' ? JSON.parse(raw)?.clinical?.vaccinations : raw?.clinical?.vaccinations
+          if (!vax || vax.length === 0) return null
+          return (
+            <div className="card">
+              <div className="section-label" style={{ margin: '0 0 12px' }}>Vaccinations</div>
+              {vax.map((v, i) => (
+                <DataRow key={i} label={v.vaccine} value={v.date || 'Date not specified'} />
+              ))}
+            </div>
+          )
+        })()}
+
         {/* VISITS — Phase 2 */}
         {showNewVisit ? (
           <NewVisitForm

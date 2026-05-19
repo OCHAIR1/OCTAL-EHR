@@ -199,7 +199,25 @@ export default function StudentOnboarding() {
           <>
             <div className="section-label">Medical History</div>
             {clinical.medical_history.map((h, i) => (
-              <DataRow key={i} label={h.condition} value={`${h.status} — ${h.notes || ''}`} />
+              <DataRow key={i} label={h.condition} value={`${h.status}${h.notes ? ' — ' + h.notes : ''}`} />
+            ))}
+          </>
+        )}
+
+        {clinical.current_medications?.length > 0 && (
+          <>
+            <div className="section-label">Current Medications</div>
+            {clinical.current_medications.map((m, i) => (
+              <DataRow key={i} label={m.drug} value={[m.dosage, m.frequency].filter(Boolean).join(' · ') || '—'} />
+            ))}
+          </>
+        )}
+
+        {clinical.vaccinations?.length > 0 && (
+          <>
+            <div className="section-label">Vaccinations</div>
+            {clinical.vaccinations.map((v, i) => (
+              <DataRow key={i} label={v.vaccine} value={v.date || 'Date not specified'} />
             ))}
           </>
         )}
@@ -208,6 +226,15 @@ export default function StudentOnboarding() {
         <DataRow label="Name" value={personal?.emergency_contact?.name} />
         <DataRow label="Relation" value={personal?.emergency_contact?.relationship} />
         <DataRow label="Phone" value={personal?.emergency_contact?.phone} />
+
+        {extracted.document_meta && (extracted.document_meta.issuing_facility || extracted.document_meta.issuing_doctor) && (
+          <>
+            <div className="section-label" style={{ marginTop: 8 }}>Document Source</div>
+            {extracted.document_meta.issuing_facility && <DataRow label="Hospital/Facility" value={extracted.document_meta.issuing_facility} />}
+            {extracted.document_meta.issuing_doctor && <DataRow label="Doctor" value={extracted.document_meta.issuing_doctor} />}
+            {extracted.document_meta.document_date && <DataRow label="Date" value={extracted.document_meta.document_date} />}
+          </>
+        )}
 
         <div className="btn-row">
           <button className="btn-primary" onClick={() => setStep(2)}>This looks correct →</button>

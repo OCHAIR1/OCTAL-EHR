@@ -1,5 +1,217 @@
-import { useState } from 'react'
+import { useState, useRef, useEffect } from 'react'
 import { supabase } from '../../lib/supabase'
+import { searchDrugs } from '../../lib/drug-dictionary'
+import { isClinicPC } from '../../components/StaffSidebar'
+
+// ── Offline visit queue ──────────────────────────────────────
+// When offline on a Clinic PC, visits are saved to localStorage
+// and synced when internet returns.
+
+function queueOfflineVisit(visitData) {
+  try {
+    const queue = JSON.parse(localStorage.getItem('octal_visit_queue') || '[]')
+    queue.push({ ...visitData, queuedAt: Date.now() })
+    localStorage.setItem('octal_visit_queue', JSON.stringify(queue))
+  } catch {}
+}
+
+export async function syncOfflineVisits() {
+  if (!navigator.onLine) return
+  try {
+    const queue = JSON.parse(localStorage.getItem('octal_visit_queue') || '[]')
+    if (queue.length === 0) return
+
+    const synced = []
+    for (const entry of queue) {
+      try {
+        await saveVisitToDb(entry)
+        synced.push(entry.queuedAt)
+      } catch {
+        // leave failed ones in queue
+      }
+    }
+
+    // Remove synced entries
+    const remaining = queue.filter(e => !synced.includes(e.queuedAt))
+    localStorage.setItem('octal_visit_queue', JSON.stringify(remaining))
+  } catch {}
+}
+
+async function saveVisitToDb({ studentId, complaint, notes, vitals, diagnoses, prescriptions }) {
+  const user = (await supabase.auth.getUser()).data.user
+  const { data: staffData } = await supabase
+    .from('staff')
+    .select('id')
+    .eq('auth_user_id', user.id)
+    .single()
+
+  const staffId = staffData?.id || null
+
+  // 1. Create visit
+  const { data: visit, error: visitErr } = await supabase
+    .from('visits')
+    .insert({
+      student_id: studentId,
+      complaint_enc: complaint,
+      notes_enc: notes || null,
+      seen_by: staffId,
+      status: 'open'
+    })
+    .select('id')
+    .single()
+
+  if (visitErr) throw visitErr
+
+  // 2. Insert vitals
+  const hasVitals = Object.values(vitals).some(v => v !== '')
+  if (hasVitals) {
+    await supabase.from('vitals').insert({
+      visit_id: visit.id,
+      blood_pressure: vitals.blood_pressure || null,
+      temperature: vitals.temperature ? parseFloat(vitals.temperature) : null,
+      weight: vitals.weight ? parseFloat(vitals.weight) : null,
+      height: vitals.height ? parseFloat(vitals.height) : null,
+      pulse: vitals.pulse ? parseInt(vitals.pulse) : null,
+      respiratory_rate: vitals.respiratory_rate ? parseInt(vitals.respiratory_rate) : null,
+      spo2: vitals.spo2 ? parseInt(vitals.spo2) : null,
+      recorded_by: staffId
+    })
+  }
+
+  // 3. Insert diagnoses
+  const validDiagnoses = diagnoses.filter(d => d.description.trim())
+  if (validDiagnoses.length > 0) {
+    await supabase.from('diagnoses').insert(
+      validDiagnoses.map(d => ({
+        visit_id: visit.id,
+        description_enc: d.description,
+        icd_code: d.icd_code || null,
+        notes_enc: d.notes || null,
+        diagnosed_by: staffId
+      }))
+    )
+  }
+
+  // 4. Insert prescriptions
+  const validPrescriptions = prescriptions.filter(p => p.drug.trim())
+  if (validPrescriptions.length > 0) {
+    await supabase.from('prescriptions').insert(
+      validPrescriptions.map(p => ({
+        visit_id: visit.id,
+        drug_enc: p.drug,
+        dosage: p.dosage || null,
+        frequency: p.frequency || null,
+        duration: p.duration || null,
+        prescribed_by: staffId
+      }))
+    )
+  }
+
+  // 5. Audit log
+  await supabase.from('audit_log').insert({
+    actor_id: user.id,
+    actor_role: 'staff',
+    action: 'CREATE_VISIT',
+    resource_type: 'visits',
+    resource_id: visit.id,
+    metadata: { student_id: studentId }
+  })
+
+  return visit.id
+}
+
+// ── Drug Autocomplete Component ──────────────────────────────
+
+function DrugInput({ value, onChange, placeholder }) {
+  const [suggestions, setSuggestions] = useState([])
+  const [showSuggestions, setShowSuggestions] = useState(false)
+  const [selectedIdx, setSelectedIdx] = useState(-1)
+  const wrapperRef = useRef(null)
+
+  useEffect(() => {
+    const handleClickOutside = (e) => {
+      if (wrapperRef.current && !wrapperRef.current.contains(e.target)) {
+        setShowSuggestions(false)
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [])
+
+  const handleChange = (e) => {
+    const val = e.target.value
+    onChange(val)
+    const results = searchDrugs(val)
+    setSuggestions(results)
+    setShowSuggestions(results.length > 0)
+    setSelectedIdx(-1)
+  }
+
+  const handleKeyDown = (e) => {
+    if (!showSuggestions) return
+    if (e.key === 'ArrowDown') {
+      e.preventDefault()
+      setSelectedIdx(prev => Math.min(prev + 1, suggestions.length - 1))
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault()
+      setSelectedIdx(prev => Math.max(prev - 1, 0))
+    } else if (e.key === 'Enter' && selectedIdx >= 0) {
+      e.preventDefault()
+      onChange(suggestions[selectedIdx])
+      setShowSuggestions(false)
+    } else if (e.key === 'Escape') {
+      setShowSuggestions(false)
+    }
+  }
+
+  const selectSuggestion = (drug) => {
+    onChange(drug)
+    setShowSuggestions(false)
+  }
+
+  return (
+    <div ref={wrapperRef} style={{ position: 'relative' }}>
+      <input
+        type="text"
+        placeholder={placeholder}
+        value={value}
+        onChange={handleChange}
+        onKeyDown={handleKeyDown}
+        onFocus={() => {
+          const results = searchDrugs(value)
+          if (results.length > 0) { setSuggestions(results); setShowSuggestions(true) }
+        }}
+      />
+      {showSuggestions && (
+        <div style={{
+          position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 50,
+          background: 'var(--white)', border: '1.5px solid var(--green-light)',
+          borderRadius: 'var(--radius)', boxShadow: '0 8px 24px rgba(0,0,0,0.12)',
+          maxHeight: 200, overflowY: 'auto', marginTop: 4
+        }}>
+          {suggestions.map((drug, i) => (
+            <div
+              key={i}
+              onClick={() => selectSuggestion(drug)}
+              style={{
+                padding: '10px 14px', cursor: 'pointer', fontSize: 13,
+                fontFamily: "'Outfit', sans-serif", color: 'var(--text)',
+                background: i === selectedIdx ? 'var(--green-pale)' : 'transparent',
+                borderBottom: i < suggestions.length - 1 ? '1px solid var(--border)' : 'none',
+                transition: 'background 0.1s'
+              }}
+              onMouseEnter={() => setSelectedIdx(i)}
+            >
+              {drug}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ── Main Form Component ──────────────────────────────────────
 
 export default function NewVisitForm({ studentId, onComplete, onCancel }) {
   const [step, setStep] = useState(0) // 0: complaint, 1: vitals, 2: diagnosis, 3: prescriptions, 4: review
@@ -36,95 +248,31 @@ export default function NewVisitForm({ studentId, onComplete, onCancel }) {
     setSaving(true)
     setError(null)
 
+    const visitData = { studentId, complaint, notes, vitals, diagnoses, prescriptions }
+
     try {
-      const user = (await supabase.auth.getUser()).data.user
-
-      // Get staff record
-      const { data: staffData } = await supabase
-        .from('staff')
-        .select('id')
-        .eq('auth_user_id', user.id)
-        .single()
-
-      const staffId = staffData?.id || null
-
-      // 1. Create visit
-      const { data: visit, error: visitErr } = await supabase
-        .from('visits')
-        .insert({
-          student_id: studentId,
-          complaint_enc: complaint,
-          notes_enc: notes || null,
-          seen_by: staffId,
-          status: 'open'
-        })
-        .select('id')
-        .single()
-
-      if (visitErr) throw visitErr
-
-      // 2. Insert vitals
-      const hasVitals = Object.values(vitals).some(v => v !== '')
-      if (hasVitals) {
-        await supabase.from('vitals').insert({
-          visit_id: visit.id,
-          blood_pressure: vitals.blood_pressure || null,
-          temperature: vitals.temperature ? parseFloat(vitals.temperature) : null,
-          weight: vitals.weight ? parseFloat(vitals.weight) : null,
-          height: vitals.height ? parseFloat(vitals.height) : null,
-          pulse: vitals.pulse ? parseInt(vitals.pulse) : null,
-          respiratory_rate: vitals.respiratory_rate ? parseInt(vitals.respiratory_rate) : null,
-          spo2: vitals.spo2 ? parseInt(vitals.spo2) : null,
-          recorded_by: staffId
-        })
+      if (navigator.onLine) {
+        await saveVisitToDb(visitData)
+      } else {
+        // Offline — only on Clinic PC
+        if (!isClinicPC()) {
+          setError('You are offline and this device is not set as a Clinic PC. Connect to the internet to save.')
+          setSaving(false)
+          return
+        }
+        queueOfflineVisit(visitData)
       }
 
-      // 3. Insert diagnoses
-      const validDiagnoses = diagnoses.filter(d => d.description.trim())
-      if (validDiagnoses.length > 0) {
-        await supabase.from('diagnoses').insert(
-          validDiagnoses.map(d => ({
-            visit_id: visit.id,
-            description_enc: d.description,
-            icd_code: d.icd_code || null,
-            notes_enc: d.notes || null,
-            diagnosed_by: staffId
-          }))
-        )
-      }
-
-      // 4. Insert prescriptions
-      const validPrescriptions = prescriptions.filter(p => p.drug.trim())
-      if (validPrescriptions.length > 0) {
-        await supabase.from('prescriptions').insert(
-          validPrescriptions.map(p => ({
-            visit_id: visit.id,
-            drug_enc: p.drug,
-            dosage: p.dosage || null,
-            frequency: p.frequency || null,
-            duration: p.duration || null,
-            prescribed_by: staffId
-          }))
-        )
-      }
-
-      // 5. Audit log
-      await supabase.from('audit_log').insert({
-        actor_id: user.id,
-        actor_role: 'staff',
-        action: 'CREATE_VISIT',
-        resource_type: 'visits',
-        resource_id: visit.id,
-        metadata: { student_id: studentId }
-      })
-
-      if (onComplete) onComplete(visit.id)
+      if (onComplete) onComplete()
     } catch (err) {
       setError(err.message || 'Failed to save visit.')
     } finally {
       setSaving(false)
     }
   }
+
+  // Try syncing queued visits when this component mounts (if online)
+  useEffect(() => { syncOfflineVisits() }, [])
 
   const renderStepIndicator = () => {
     const steps = ['Complaint', 'Vitals', 'Diagnosis', 'Rx', 'Review']
@@ -165,7 +313,7 @@ export default function NewVisitForm({ studentId, onComplete, onCancel }) {
       </div>
 
       <div className="field">
-        <label>Initial Notes (optional)</label>
+        <label>Clinical Notes (optional)</label>
         <textarea
           style={{
             width: '100%', minHeight: 100, border: '2px solid var(--border)',
@@ -188,48 +336,66 @@ export default function NewVisitForm({ studentId, onComplete, onCancel }) {
   )
 
   // ── Step 1: Vitals ──────────────────────────────────
-  const renderVitals = () => (
-    <>
-      <h2 className="page-title" style={{ fontSize: 22 }}>Vitals</h2>
-      <p className="page-desc">Record patient vitals. Leave blank if not measured.</p>
+  const renderVitals = () => {
+    // Auto-calculate BMI
+    const bmi = (vitals.weight && vitals.height)
+      ? (parseFloat(vitals.weight) / ((parseFloat(vitals.height) / 100) ** 2)).toFixed(1)
+      : null
 
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0 16px' }}>
-        <div className="field">
-          <label>Blood Pressure</label>
-          <input type="text" placeholder="120/80" value={vitals.blood_pressure} onChange={e => updateVital('blood_pressure', e.target.value)} />
-        </div>
-        <div className="field">
-          <label>Temperature (°C)</label>
-          <input type="number" step="0.1" placeholder="36.5" value={vitals.temperature} onChange={e => updateVital('temperature', e.target.value)} />
-        </div>
-        <div className="field">
-          <label>Weight (kg)</label>
-          <input type="number" step="0.1" placeholder="65.0" value={vitals.weight} onChange={e => updateVital('weight', e.target.value)} />
-        </div>
-        <div className="field">
-          <label>Height (cm)</label>
-          <input type="number" step="0.1" placeholder="170.0" value={vitals.height} onChange={e => updateVital('height', e.target.value)} />
-        </div>
-        <div className="field">
-          <label>Pulse (bpm)</label>
-          <input type="number" placeholder="72" value={vitals.pulse} onChange={e => updateVital('pulse', e.target.value)} />
-        </div>
-        <div className="field">
-          <label>Respiratory Rate</label>
-          <input type="number" placeholder="18" value={vitals.respiratory_rate} onChange={e => updateVital('respiratory_rate', e.target.value)} />
-        </div>
-        <div className="field">
-          <label>SpO2 (%)</label>
-          <input type="number" placeholder="98" value={vitals.spo2} onChange={e => updateVital('spo2', e.target.value)} />
-        </div>
-      </div>
+    return (
+      <>
+        <h2 className="page-title" style={{ fontSize: 22 }}>Vitals</h2>
+        <p className="page-desc">Record patient vitals. Leave blank if not measured.</p>
 
-      <div style={{ display: 'flex', gap: 12, marginTop: 24 }}>
-        <button className="btn-secondary" style={{ marginTop: 0 }} onClick={() => setStep(0)}>← Back</button>
-        <button className="btn-primary" onClick={() => setStep(2)}>Next: Diagnosis →</button>
-      </div>
-    </>
-  )
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0 16px' }}>
+          <div className="field">
+            <label>Blood Pressure</label>
+            <input type="text" placeholder="120/80" value={vitals.blood_pressure} onChange={e => updateVital('blood_pressure', e.target.value)} />
+          </div>
+          <div className="field">
+            <label>Temperature (°C)</label>
+            <input type="number" step="0.1" placeholder="36.5" value={vitals.temperature} onChange={e => updateVital('temperature', e.target.value)} />
+          </div>
+          <div className="field">
+            <label>Weight (kg)</label>
+            <input type="number" step="0.1" placeholder="65.0" value={vitals.weight} onChange={e => updateVital('weight', e.target.value)} />
+          </div>
+          <div className="field">
+            <label>Height (cm)</label>
+            <input type="number" step="0.1" placeholder="170.0" value={vitals.height} onChange={e => updateVital('height', e.target.value)} />
+          </div>
+          <div className="field">
+            <label>Pulse (bpm)</label>
+            <input type="number" placeholder="72" value={vitals.pulse} onChange={e => updateVital('pulse', e.target.value)} />
+          </div>
+          <div className="field">
+            <label>Respiratory Rate</label>
+            <input type="number" placeholder="18" value={vitals.respiratory_rate} onChange={e => updateVital('respiratory_rate', e.target.value)} />
+          </div>
+          <div className="field">
+            <label>SpO2 (%)</label>
+            <input type="number" placeholder="98" value={vitals.spo2} onChange={e => updateVital('spo2', e.target.value)} />
+          </div>
+          {bmi && (
+            <div className="field">
+              <label>BMI (auto)</label>
+              <div style={{
+                padding: '10px 14px', background: 'var(--surface)', borderRadius: 'var(--radius)',
+                fontFamily: "'DM Mono', monospace", fontSize: 14, fontWeight: 700, color: 'var(--green)'
+              }}>
+                {bmi} kg/m²
+              </div>
+            </div>
+          )}
+        </div>
+
+        <div style={{ display: 'flex', gap: 12, marginTop: 24 }}>
+          <button className="btn-secondary" style={{ marginTop: 0 }} onClick={() => setStep(0)}>← Back</button>
+          <button className="btn-primary" onClick={() => setStep(2)}>Next: Diagnosis →</button>
+        </div>
+      </>
+    )
+  }
 
   // ── Step 2: Diagnoses ───────────────────────────────
   const renderDiagnosis = () => (
@@ -294,13 +460,16 @@ export default function NewVisitForm({ studentId, onComplete, onCancel }) {
           )}
           <div className="field">
             <label>Drug Name *</label>
-            <input type="text" placeholder="e.g. Artemether-Lumefantrine" value={p.drug}
-              onChange={e => updatePrescription(i, 'drug', e.target.value)} />
+            <DrugInput
+              placeholder="Start typing — e.g. Paracetamol, Amoxicillin"
+              value={p.drug}
+              onChange={val => updatePrescription(i, 'drug', val)}
+            />
           </div>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '0 12px' }}>
             <div className="field">
               <label>Dosage</label>
-              <input type="text" placeholder="80/480mg" value={p.dosage}
+              <input type="text" placeholder="500mg" value={p.dosage}
                 onChange={e => updatePrescription(i, 'dosage', e.target.value)} />
             </div>
             <div className="field">
@@ -336,6 +505,12 @@ export default function NewVisitForm({ studentId, onComplete, onCancel }) {
       <h2 className="page-title" style={{ fontSize: 22 }}>Review & Save</h2>
       <p className="page-desc">Confirm all details before saving this visit record.</p>
 
+      {!navigator.onLine && (
+        <div className="warning-box" style={{ marginBottom: 16 }}>
+          📡 You are offline. {isClinicPC() ? 'This visit will be saved locally and synced when internet returns.' : 'Connect to the internet to save.'}
+        </div>
+      )}
+
       <div className="card">
         <div className="section-label" style={{ margin: '0 0 8px' }}>Complaint</div>
         <p style={{ fontSize: 15, fontWeight: 500, marginBottom: 4 }}>{complaint}</p>
@@ -352,6 +527,9 @@ export default function NewVisitForm({ studentId, onComplete, onCancel }) {
           {vitals.pulse && <DataRow label="Pulse" value={`${vitals.pulse} bpm`} />}
           {vitals.respiratory_rate && <DataRow label="RR" value={vitals.respiratory_rate} />}
           {vitals.spo2 && <DataRow label="SpO2" value={`${vitals.spo2}%`} />}
+          {vitals.weight && vitals.height && (
+            <DataRow label="BMI" value={`${(parseFloat(vitals.weight) / ((parseFloat(vitals.height) / 100) ** 2)).toFixed(1)} kg/m²`} />
+          )}
         </div>
       )}
 
@@ -378,7 +556,7 @@ export default function NewVisitForm({ studentId, onComplete, onCancel }) {
       <div style={{ display: 'flex', gap: 12, marginTop: 24 }}>
         <button className="btn-secondary" style={{ marginTop: 0 }} onClick={() => setStep(3)}>← Edit</button>
         <button className="btn-primary" disabled={saving} onClick={handleSave}>
-          {saving ? 'Saving…' : '✓ Save Visit Record'}
+          {saving ? 'Saving…' : navigator.onLine ? '✓ Save Visit Record' : '✓ Save Offline'}
         </button>
       </div>
     </>
