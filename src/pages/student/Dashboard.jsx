@@ -43,8 +43,8 @@ export default function StudentDashboard() {
         .maybeSingle()
 
       if (sErr) throw sErr
-      if (!studentData) {
-        // No profile yet — send to onboarding
+      if (!studentData || !studentData.profile_verified) {
+        // No profile or reset account — send to onboarding
         navigate('/student/onboarding')
         return
       }
