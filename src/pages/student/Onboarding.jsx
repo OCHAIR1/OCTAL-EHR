@@ -39,14 +39,15 @@ export default function StudentOnboarding() {
   const [matricNo, setMatricNo] = useState('')
 
   // Upload
-  const [file, setFile] = useState(null)
+  const [files, setFiles] = useState([])
   const [dragOver, setDragOver] = useState(false)
   const fileRef = useRef()
 
   // Extraction
   const [processing, setProcessing] = useState(false)
+  const [processingIdx, setProcessingIdx] = useState(0)
   const [extracted, setExtracted] = useState(null)
-  const [extractionResult, setExtractionResult] = useState(null)
+  const [extractionResults, setExtractionResults] = useState([])
   const [error, setError] = useState(null)
 
   // Emergency contact (editable)
@@ -99,25 +100,42 @@ export default function StudentOnboarding() {
   const handleFileDrop = useCallback((e) => {
     e.preventDefault()
     setDragOver(false)
-    const dropped = e.dataTransfer?.files?.[0] || e.target.files?.[0]
-    if (dropped) setFile(dropped)
+    const newFiles = e.dataTransfer?.files || e.target?.files
+    if (newFiles?.length) {
+      setFiles(prev => [...prev, ...Array.from(newFiles)])
+    }
   }, [])
+
+  const removeFile = (idx) => {
+    setFiles(prev => prev.filter((_, i) => i !== idx))
+  }
 
   const handleExtract = async () => {
     setProcessing(true)
     setError(null)
 
     try {
-      const result = await extractMedicalData(file)
-      setExtracted(result.extracted)
-      setExtractionResult(result)
+      const results = []
+      for (let i = 0; i < files.length; i++) {
+        setProcessingIdx(i)
+        const result = await extractMedicalData(files[i])
+        results.push(result)
+      }
+      setExtractionResults(results)
 
-      // Pre-fill emergency contact from extraction
-      const ec = result.extracted?.personal?.emergency_contact
-      if (ec) {
-        setEcName(ec.name || '')
-        setEcRelation(ec.relationship || '')
-        setEcPhone(ec.phone || '')
+      // Merge all extraction results into one combined view
+      const merged = mergeExtractions(results.map(r => r.extracted))
+      setExtracted(merged)
+
+      // Pre-fill emergency contact from first extraction that has one
+      for (const r of results) {
+        const ec = r.extracted?.personal?.emergency_contact
+        if (ec?.name) {
+          setEcName(ec.name || '')
+          setEcRelation(ec.relationship || '')
+          setEcPhone(ec.phone || '')
+          break
+        }
       }
 
       setProcessing(false)
@@ -130,32 +148,53 @@ export default function StudentOnboarding() {
 
   const renderUpload = () => (
     <>
-      <h1 className="page-title">Upload Medical Document</h1>
+      <h1 className="page-title">Upload Medical Documents</h1>
       <p className="page-desc">
-        Upload your medical history form, doctor's letter, or any health document
-        from your physician. Your details will be extracted automatically.
+        Upload your medical history form, doctor's letter, lab results, or any health documents
+        from your physician. All files will be scanned and details extracted automatically.
       </p>
 
       <div
-        className={`upload-zone ${dragOver ? 'upload-zone--drag' : ''} ${file ? 'upload-zone--done' : ''}`}
+        className={`upload-zone ${dragOver ? 'upload-zone--drag' : ''} ${files.length > 0 ? 'upload-zone--done' : ''}`}
         onClick={() => fileRef.current?.click()}
         onDragOver={(e) => { e.preventDefault(); setDragOver(true) }}
         onDragLeave={() => setDragOver(false)}
         onDrop={handleFileDrop}
       >
-        <div className="upload-icon">{file ? '✓' : '↑'}</div>
-        <div className="upload-title">{file ? 'Document ready' : 'Tap to upload'}</div>
-        <div className="upload-hint">{file ? 'Tap to replace' : 'PDF, JPG, PNG — max 10MB'}</div>
-        {file && <div className="file-name">{file.name}</div>}
-        <input ref={fileRef} type="file" accept=".pdf,.jpg,.jpeg,.png,.webp"
+        <div className="upload-icon">{files.length > 0 ? '✓' : '↑'}</div>
+        <div className="upload-title">{files.length > 0 ? `${files.length} document${files.length > 1 ? 's' : ''} selected` : 'Tap to upload'}</div>
+        <div className="upload-hint">{files.length > 0 ? 'Tap to add more' : 'PDF, JPG, PNG — max 10MB each'}</div>
+        <input ref={fileRef} type="file" accept=".pdf,.jpg,.jpeg,.png,.webp" multiple
           style={{ display: 'none' }} onChange={handleFileDrop} />
       </div>
+
+      {/* File list */}
+      {files.length > 0 && (
+        <div style={{ marginTop: 12, display: 'flex', flexDirection: 'column', gap: 6 }}>
+          {files.map((f, i) => (
+            <div key={i} style={{
+              display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+              padding: '8px 12px', background: 'var(--surface)', borderRadius: 'var(--radius)',
+              border: '1px solid var(--border)'
+            }}>
+              <div>
+                <div style={{ fontSize: 13, fontWeight: 500, color: 'var(--text)' }}>{f.name}</div>
+                <div style={{ fontSize: 11, color: 'var(--muted)' }}>{Math.round(f.size / 1024)}KB</div>
+              </div>
+              <button onClick={(e) => { e.stopPropagation(); removeFile(i) }} style={{
+                background: 'none', border: 'none', color: 'var(--alert)', cursor: 'pointer',
+                fontSize: 16, padding: '4px 8px'
+              }}>✕</button>
+            </div>
+          ))}
+        </div>
+      )}
 
       {error && <div className="error-box" style={{ marginTop: 16 }}>⚠ {error}</div>}
 
       <div className="btn-row">
-        <button className="btn-primary" disabled={!file} onClick={handleExtract}>
-          Scan Document →
+        <button className="btn-primary" disabled={files.length === 0} onClick={handleExtract}>
+          Scan {files.length > 1 ? `${files.length} Documents` : 'Document'} →
         </button>
       </div>
     </>
@@ -165,9 +204,9 @@ export default function StudentOnboarding() {
   const renderProcessing = () => (
     <div className="centered-state">
       <div className="spinner" />
-      <h2 className="page-title" style={{ fontSize: 22, marginBottom: 8 }}>Scanning document…</h2>
+      <h2 className="page-title" style={{ fontSize: 22, marginBottom: 8 }}>Scanning document{files.length > 1 ? `s (${processingIdx + 1}/${files.length})` : ''}…</h2>
       <p className="page-desc" style={{ maxWidth: 260, marginBottom: 0 }}>
-        Reading your medical document and extracting your health details. This takes 5–15 seconds.
+        Reading your medical document{files.length > 1 ? 's' : ''} and extracting health details. This takes 5–15 seconds{files.length > 1 ? ' per file' : ''}.
       </p>
     </div>
   )
@@ -327,14 +366,19 @@ export default function StudentOnboarding() {
       const matricHash = await hashMatricNo(matricNo)
       const { personal, clinical } = extracted
 
-      // Upload medical document to Cloudflare R2
-      let docPath = null
-      if (file) {
+      // Upload ALL medical documents to Cloudflare R2
+      const uploadedDocs = []
+      for (let i = 0; i < files.length; i++) {
+        const f = files[i]
         try {
-          const result = await uploadToR2(file, matricHash)
-          docPath = result.storagePath
+          const result = await uploadToR2(f, matricHash)
+          uploadedDocs.push({
+            storagePath: result.storagePath,
+            file: f,
+            extractionResult: extractionResults[i] || null
+          })
         } catch (uploadErr) {
-          console.warn('R2 upload failed, continuing without document:', uploadErr.message)
+          console.warn(`R2 upload failed for ${f.name}, continuing:`, uploadErr.message)
         }
       }
 
@@ -415,17 +459,19 @@ export default function StudentOnboarding() {
         await supabaseAdmin.from('medical_history').insert(historyRows)
       }
 
-      // Insert document record
-      if (docPath) {
+      // Insert document records for ALL uploaded files
+      for (const doc of uploadedDocs) {
+        const exResult = doc.extractionResult
+        const exData = exResult?.extracted
         await supabaseAdmin.from('documents').insert({
           student_id: studentId,
-          document_type: extracted.document_meta?.document_type || 'other',
-          storage_path_enc: docPath,
-          original_filename: file.name,
-          file_size_bytes: file.size,
-          mime_type: file.type,
-          ai_raw_json: extractionResult?.rawJson ? JSON.parse(extractionResult.rawJson) : null,
-          ai_confidence: extracted.extraction_meta?.confidence || null,
+          document_type: exData?.document_meta?.document_type || 'other',
+          storage_path_enc: doc.storagePath,
+          original_filename: doc.file.name,
+          file_size_bytes: doc.file.size,
+          mime_type: doc.file.type,
+          ai_raw_json: exResult?.rawJson ? JSON.parse(exResult.rawJson) : null,
+          ai_confidence: exData?.extraction_meta?.confidence || null,
           extraction_status: 'verified'
         })
       }

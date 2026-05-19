@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react'
-import { supabase } from '../../lib/supabase'
+import { supabase, supabaseAdmin } from '../../lib/supabase'
 import { searchDrugs } from '../../lib/drug-dictionary'
 import { isClinicPC } from '../../components/StaffSidebar'
 
@@ -47,14 +47,15 @@ async function saveVisitToDb({ studentId, complaint, notes, vitals, diagnoses, p
 
   const staffId = staffData?.id || null
 
-  // 1. Create visit
-  const { data: visit, error: visitErr } = await supabase
+  // 1. Create visit — use supabaseAdmin to bypass RLS, correct column names from Phase 1 schema
+  const { data: visit, error: visitErr } = await supabaseAdmin
     .from('visits')
     .insert({
       student_id: studentId,
-      complaint_enc: complaint,
+      presenting_complaint_enc: complaint || 'General Visit',
       notes_enc: notes || null,
-      seen_by: staffId,
+      attending_staff_id: staffId,
+      visit_date: new Date().toISOString(),
       status: 'open'
     })
     .select('id')
@@ -62,10 +63,10 @@ async function saveVisitToDb({ studentId, complaint, notes, vitals, diagnoses, p
 
   if (visitErr) throw visitErr
 
-  // 2. Insert vitals
+  // 2. Insert vitals (only if any were recorded)
   const hasVitals = Object.values(vitals).some(v => v !== '')
   if (hasVitals) {
-    await supabase.from('vitals').insert({
+    await supabaseAdmin.from('vitals').insert({
       visit_id: visit.id,
       blood_pressure: vitals.blood_pressure || null,
       temperature: vitals.temperature ? parseFloat(vitals.temperature) : null,
@@ -78,10 +79,10 @@ async function saveVisitToDb({ studentId, complaint, notes, vitals, diagnoses, p
     })
   }
 
-  // 3. Insert diagnoses
+  // 3. Insert diagnoses (only if any were entered)
   const validDiagnoses = diagnoses.filter(d => d.description.trim())
   if (validDiagnoses.length > 0) {
-    await supabase.from('diagnoses').insert(
+    await supabaseAdmin.from('diagnoses').insert(
       validDiagnoses.map(d => ({
         visit_id: visit.id,
         description_enc: d.description,
@@ -92,10 +93,10 @@ async function saveVisitToDb({ studentId, complaint, notes, vitals, diagnoses, p
     )
   }
 
-  // 4. Insert prescriptions
+  // 4. Insert prescriptions (only if any were entered)
   const validPrescriptions = prescriptions.filter(p => p.drug.trim())
   if (validPrescriptions.length > 0) {
-    await supabase.from('prescriptions').insert(
+    await supabaseAdmin.from('prescriptions').insert(
       validPrescriptions.map(p => ({
         visit_id: visit.id,
         drug_enc: p.drug,
@@ -327,8 +328,11 @@ export default function NewVisitForm({ studentId, onComplete, onCancel }) {
       </div>
 
       <div style={{ display: 'flex', gap: 12, marginTop: 24 }}>
-        <button className="btn-primary" disabled={!complaint.trim()} onClick={() => setStep(1)}>
+        <button className="btn-primary" onClick={() => setStep(1)}>
           Next: Vitals →
+        </button>
+        <button className="btn-primary" style={{ marginTop: 0, background: 'var(--green-light)' }} onClick={() => setStep(4)}>
+          Skip to Review →
         </button>
         <button className="btn-secondary" style={{ marginTop: 0 }} onClick={onCancel}>Cancel</button>
       </div>
@@ -392,6 +396,7 @@ export default function NewVisitForm({ studentId, onComplete, onCancel }) {
         <div style={{ display: 'flex', gap: 12, marginTop: 24 }}>
           <button className="btn-secondary" style={{ marginTop: 0 }} onClick={() => setStep(0)}>← Back</button>
           <button className="btn-primary" onClick={() => setStep(2)}>Next: Diagnosis →</button>
+          <button className="btn-primary" style={{ marginTop: 0, background: 'var(--green-light)' }} onClick={() => setStep(4)}>Skip to Review →</button>
         </div>
       </>
     )
@@ -440,6 +445,7 @@ export default function NewVisitForm({ studentId, onComplete, onCancel }) {
       <div style={{ display: 'flex', gap: 12 }}>
         <button className="btn-secondary" style={{ marginTop: 0 }} onClick={() => setStep(1)}>← Back</button>
         <button className="btn-primary" onClick={() => setStep(3)}>Next: Prescriptions →</button>
+        <button className="btn-primary" style={{ marginTop: 0, background: 'var(--green-light)' }} onClick={() => setStep(4)}>Skip to Review →</button>
       </div>
     </>
   )

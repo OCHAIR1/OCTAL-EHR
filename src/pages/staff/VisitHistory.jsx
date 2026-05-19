@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { supabase } from '../../lib/supabase'
+import { supabase, supabaseAdmin } from '../../lib/supabase'
 
 export default function VisitHistory({ studentId, refreshKey }) {
   const [visits, setVisits] = useState([])
@@ -15,7 +15,7 @@ export default function VisitHistory({ studentId, refreshKey }) {
     setLoading(true)
     const { data } = await supabase
       .from('visits')
-      .select('*, staff:seen_by(full_name)')
+      .select('*, staff:attending_staff_id(full_name)')
       .eq('student_id', studentId)
       .order('created_at', { ascending: false })
 
@@ -50,9 +50,9 @@ export default function VisitHistory({ studentId, refreshKey }) {
   }
 
   const closeVisit = async (visitId) => {
-    await supabase
+    await supabaseAdmin
       .from('visits')
-      .update({ status: 'closed', closed_at: new Date().toISOString() })
+      .update({ status: 'closed', updated_at: new Date().toISOString() })
       .eq('id', visitId)
 
     loadVisits()
@@ -97,7 +97,7 @@ export default function VisitHistory({ studentId, refreshKey }) {
           >
             <div>
               <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--text)', marginBottom: 2 }}>
-                {visit.complaint_enc}
+                {visit.presenting_complaint_enc || 'General Visit'}
               </div>
               <div style={{ fontSize: 11, color: 'var(--muted)' }}>
                 {formatDate(visit.created_at)} {visit.staff?.full_name ? `· ${visit.staff.full_name}` : ''}

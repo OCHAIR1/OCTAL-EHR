@@ -48,37 +48,48 @@ export function getNextClient() {
  */
 export async function callWithRotation(callFn) {
   const totalKeys = clients.length
+  const maxCycles = 3  // retry the full rotation up to 3 times with backoff
   let lastError = null
 
-  for (let attempt = 0; attempt < totalKeys; attempt++) {
-    const client = getNextClient()
-    try {
-      return await callFn(client)
-    } catch (err) {
-      lastError = err
-      const status = err?.status || err?.httpStatus || err?.code
-      const msg = err?.message || ''
+  for (let cycle = 0; cycle < maxCycles; cycle++) {
+    for (let attempt = 0; attempt < totalKeys; attempt++) {
+      const client = getNextClient()
+      try {
+        return await callFn(client)
+      } catch (err) {
+        lastError = err
+        const status = err?.status || err?.httpStatus || err?.code
+        const msg = err?.message || ''
 
-      // Only rotate on rate limit errors
-      const isRateLimit = status === 429 ||
-        msg.includes('429') ||
-        msg.includes('RESOURCE_EXHAUSTED') ||
-        msg.includes('rate') ||
-        msg.includes('quota')
+        // Only rotate on rate limit or network errors
+        const isRetryable = status === 429 ||
+          msg.includes('429') ||
+          msg.includes('RESOURCE_EXHAUSTED') ||
+          msg.includes('rate') ||
+          msg.includes('quota') ||
+          msg.includes('Failed to fetch') ||
+          msg.includes('network') ||
+          msg.includes('ECONNRESET')
 
-      if (!isRateLimit) {
-        throw err // non-rate-limit error — don't retry
+        if (!isRetryable) {
+          throw err // non-retryable error — don't retry
+        }
+
+        console.warn(`Gemini key ${attempt + 1}/${totalKeys} failed (cycle ${cycle + 1}), rotating...`)
       }
+    }
 
-      // Rate limited — try next key
-      console.warn(`Gemini key ${attempt + 1}/${totalKeys} rate limited, rotating...`)
+    // All keys exhausted in this cycle — wait with exponential backoff before retrying
+    if (cycle < maxCycles - 1) {
+      const waitMs = 10000 * Math.pow(2, cycle) // 10s, 20s, 40s
+      console.warn(`All keys exhausted. Waiting ${waitMs / 1000}s before retry cycle ${cycle + 2}...`)
+      await new Promise(resolve => setTimeout(resolve, waitMs))
     }
   }
 
-  // All keys exhausted
+  // All cycles exhausted — give a friendly error
   throw new Error(
-    `All ${totalKeys} Gemini API keys are rate limited. Please wait a moment and try again. ` +
-    `Last error: ${lastError?.message || 'Unknown'}`
+    'Document processing is temporarily busy. Please wait a minute and try again.'
   )
 }
 

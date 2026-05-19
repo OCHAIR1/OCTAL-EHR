@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react'
+import React, { useState, useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { supabase, getUser, signOut } from '../../lib/supabase'
 
@@ -24,6 +24,7 @@ export default function StudentDashboard() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
   const [expandedVisit, setExpandedVisit] = useState(null)
+  const [visitDetails, setVisitDetails] = useState({})
   const [userEmail, setUserEmail] = useState('')
   const [changePwSending, setChangePwSending] = useState(false)
   const [changePwMsg, setChangePwMsg] = useState(null)
@@ -411,17 +412,102 @@ export default function StudentDashboard() {
 
                     {/* Always show details in print, toggle on screen */}
                     <div className={isOpen ? '' : 'visit-details-collapsed'} style={{ padding: '0 16px 16px', borderTop: '1px solid var(--border)' }}>
-                      {v.notes_enc && (
-                        <div style={{ marginTop: 12 }}>
-                          <div style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 1, color: 'var(--muted)', marginBottom: 4 }}>
-                            Notes
-                          </div>
-                          <p style={{ fontSize: 13, color: 'var(--text)', lineHeight: 1.6 }}>{v.notes_enc}</p>
-                        </div>
-                      )}
-                      {!v.notes_enc && (
-                        <p style={{ marginTop: 12, fontSize: 12, color: 'var(--muted)', fontStyle: 'italic' }}>No notes recorded.</p>
-                      )}
+                      {(() => {
+                        // Lazy-load visit details when expanded
+                        if (isOpen && !visitDetails[v.id]) {
+                          // Fetch details
+                          Promise.all([
+                            supabase.from('vitals').select('*').eq('visit_id', v.id),
+                            supabase.from('diagnoses').select('*').eq('visit_id', v.id),
+                            supabase.from('prescriptions').select('*').eq('visit_id', v.id)
+                          ]).then(([vitalsRes, diagRes, rxRes]) => {
+                            setVisitDetails(prev => ({
+                              ...prev,
+                              [v.id]: {
+                                vitals: vitalsRes.data || [],
+                                diagnoses: diagRes.data || [],
+                                prescriptions: rxRes.data || []
+                              }
+                            }))
+                          })
+                          return <p style={{ fontSize: 12, color: 'var(--muted)', marginTop: 12 }}>Loading details…</p>
+                        }
+
+                        const det = visitDetails[v.id]
+                        return (
+                          <>
+                            {v.notes_enc && (
+                              <div style={{ marginTop: 12 }}>
+                                <div style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 1, color: 'var(--muted)', marginBottom: 4 }}>
+                                  Notes
+                                </div>
+                                <p style={{ fontSize: 13, color: 'var(--text)', lineHeight: 1.6 }}>{v.notes_enc}</p>
+                              </div>
+                            )}
+
+                            {/* Vitals */}
+                            {det?.vitals?.length > 0 && (
+                              <div style={{ marginTop: 12 }}>
+                                <div style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 1, color: 'var(--muted)', marginBottom: 6 }}>
+                                  Vitals
+                                </div>
+                                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                                  {det.vitals.map(vt => (
+                                    <React.Fragment key={vt.id}>
+                                      {vt.blood_pressure && <VitalChip label="BP" value={vt.blood_pressure} />}
+                                      {vt.temperature && <VitalChip label="Temp" value={`${vt.temperature}°C`} />}
+                                      {vt.pulse && <VitalChip label="Pulse" value={`${vt.pulse} bpm`} />}
+                                      {vt.weight && <VitalChip label="Weight" value={`${vt.weight} kg`} />}
+                                      {vt.height && <VitalChip label="Height" value={`${vt.height} cm`} />}
+                                      {vt.spo2 && <VitalChip label="SpO2" value={`${vt.spo2}%`} />}
+                                      {vt.respiratory_rate && <VitalChip label="RR" value={vt.respiratory_rate} />}
+                                    </React.Fragment>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
+
+                            {/* Diagnoses */}
+                            {det?.diagnoses?.length > 0 && (
+                              <div style={{ marginTop: 12 }}>
+                                <div style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 1, color: 'var(--muted)', marginBottom: 4 }}>
+                                  Diagnoses
+                                </div>
+                                {det.diagnoses.map(d => (
+                                  <div key={d.id} style={{ padding: '6px 0', borderBottom: '1px solid var(--border)' }}>
+                                    <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text)' }}>
+                                      {d.description_enc}
+                                      {d.icd_code && <span style={{ fontFamily: "'DM Mono', monospace", fontSize: 10, color: 'var(--muted)', marginLeft: 6 }}>{d.icd_code}</span>}
+                                    </div>
+                                    {d.notes_enc && <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 2 }}>{d.notes_enc}</div>}
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+
+                            {/* Prescriptions / Medications */}
+                            {det?.prescriptions?.length > 0 && (
+                              <div style={{ marginTop: 12 }}>
+                                <div style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 1, color: 'var(--muted)', marginBottom: 4 }}>
+                                  💊 Medications
+                                </div>
+                                {det.prescriptions.map(p => (
+                                  <div key={p.id} style={{ padding: '6px 0', borderBottom: '1px solid var(--border)' }}>
+                                    <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text)' }}>{p.drug_enc}</div>
+                                    <div style={{ fontSize: 12, color: 'var(--muted)' }}>
+                                      {[p.dosage, p.frequency, p.duration].filter(Boolean).join(' · ')}
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+
+                            {!v.notes_enc && !det?.vitals?.length && !det?.diagnoses?.length && !det?.prescriptions?.length && (
+                              <p style={{ marginTop: 12, fontSize: 12, color: 'var(--muted)', fontStyle: 'italic' }}>No additional details recorded.</p>
+                            )}
+                          </>
+                        )
+                      })()}
                     </div>
                   </div>
                 )
@@ -530,6 +616,19 @@ export default function StudentDashboard() {
       <div className="footer no-print">
         Encrypted · NDPR Compliant · OCTAL {new Date().getFullYear()}
       </div>
+    </div>
+  )
+}
+
+function VitalChip({ label, value }) {
+  return (
+    <div style={{
+      background: 'var(--surface)', border: '1px solid var(--border)',
+      borderRadius: 'var(--radius)', padding: '4px 10px',
+      fontSize: 11, fontWeight: 500, display: 'inline-flex', gap: 4
+    }}>
+      <span style={{ color: 'var(--muted)', fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.5 }}>{label}:</span>
+      <span style={{ color: 'var(--text)', fontFamily: "'DM Mono', monospace" }}>{value}</span>
     </div>
   )
 }
