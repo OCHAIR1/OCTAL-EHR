@@ -1,25 +1,7 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { signIn, supabase } from '../../lib/supabase'
-
-/**
- * Derive the Supabase auth email from a matric number.
- * e.g. "24/15554" → "2415554@calebuniversity.edu.ng"
- */
-function matricToEmail(matric) {
-  const slug = matric.replace(/[^a-zA-Z0-9]/g, '').toLowerCase()
-  return `${slug}@calebuniversity.edu.ng`
-}
-
-/**
- * Determine if input is an email or matric number.
- * If it contains '@', it's an email. Otherwise, it's a matric number.
- */
-function resolveEmail(input) {
-  const trimmed = input.trim()
-  if (trimmed.includes('@')) return trimmed.toLowerCase()
-  return matricToEmail(trimmed)
-}
+import { hashMatricNo } from '../../lib/crypto'
 
 export default function StudentLogin() {
   const [identifier, setIdentifier] = useState('')
@@ -35,13 +17,39 @@ export default function StudentLogin() {
   const [forgotSent, setForgotSent] = useState(false)
   const [forgotError, setForgotError] = useState(null)
 
+  /**
+   * Resolve the login email from identifier.
+   * If it contains '@', it's an email — use directly.
+   * Otherwise, treat as matric number — hash it, call server-side lookup.
+   */
+  const resolveEmail = async (input) => {
+    const trimmed = input.trim()
+    if (trimmed.includes('@')) return trimmed.toLowerCase()
+
+    // Matric number — hash it and look up via server API (bypasses RLS)
+    const hash = await hashMatricNo(trimmed.toUpperCase())
+    const res = await fetch('/api/lookup', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ matric_hash: hash })
+    })
+
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}))
+      throw new Error(err.error || 'No account found for this matric number. Contact the health center to register.')
+    }
+
+    const data = await res.json()
+    return data.email
+  }
+
   const handleLogin = async (e) => {
     e.preventDefault()
     setError(null)
     setLoading(true)
 
     try {
-      const email = resolveEmail(identifier)
+      const email = await resolveEmail(identifier)
       await signIn(email, password)
 
       // Check if student already has a completed profile
@@ -54,10 +62,8 @@ export default function StudentLogin() {
           .maybeSingle()
 
         if (student && student.profile_verified && !student.profile_open) {
-          // Profile completed — go to dashboard
           navigate('/student/dashboard')
         } else {
-          // Profile not yet completed — go to onboarding
           navigate('/student/onboarding')
         }
       } else {
@@ -76,7 +82,7 @@ export default function StudentLogin() {
     setForgotLoading(true)
 
     try {
-      const email = resolveEmail(forgotInput)
+      const email = await resolveEmail(forgotInput)
       const { error: resetErr } = await supabase.auth.resetPasswordForEmail(email, {
         redirectTo: `${window.location.origin}/student/login`
       })
