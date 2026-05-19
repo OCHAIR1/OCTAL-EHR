@@ -178,22 +178,78 @@ export default function StudentDashboard() {
           </div>
         </div>
 
-        {/* ── Allergies Banner ── */}
-        {allergies.length > 0 && (
-          <div className="allergy-banner">
-            <div className="allergy-banner-icon">⚠</div>
-            <div>
-              <div className="allergy-banner-label">Known Allergies</div>
-              <div className="allergy-pills">
-                {allergies.map((a, i) => (
-                  <span key={i} className={`allergy-pill allergy-pill--${a.severity || 'moderate'}`}>
-                    {a.allergen_enc}{(a.severity === 'life_threatening' || a.severity === 'severe') ? ' ⚠' : ''}
-                  </span>
-                ))}
-              </div>
-            </div>
+        {/* ── Allergies ── */}
+        <div className="card" style={allergies.length > 0 ? {
+          border: '1.5px solid var(--alert)', background: 'var(--alert-bg)'
+        } : {}}>
+          <div className="section-label" style={{
+            margin: '0 0 12px',
+            color: allergies.length > 0 ? 'var(--alert)' : undefined
+          }}>
+            {allergies.length > 0 ? '⚠ Known Allergies' : 'Allergies'}
           </div>
-        )}
+          {allergies.length > 0 ? (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {allergies.map((a, i) => (
+                <div key={i} style={{
+                  display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                  padding: '10px 14px', background: 'rgba(255,255,255,0.7)', borderRadius: 'var(--radius)',
+                  border: '1px solid var(--border)'
+                }}>
+                  <span style={{ fontSize: 14, fontWeight: 600, color: 'var(--text)' }}>
+                    {a.allergen_enc}
+                  </span>
+                  <span style={{
+                    fontSize: 10, fontWeight: 800, textTransform: 'uppercase', letterSpacing: 1,
+                    padding: '4px 10px', borderRadius: 100,
+                    background: a.severity === 'life_threatening' || a.severity === 'severe'
+                      ? 'var(--alert)' : a.severity === 'moderate' ? 'var(--warn)' : '#94a3b8',
+                    color: 'white'
+                  }}>
+                    {(a.severity || 'unknown').replace('_', ' ')}
+                  </span>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p style={{ fontSize: 13, color: 'var(--muted)' }}>No known allergies on record.</p>
+          )}
+        </div>
+
+        {/* ── Medical Conditions ── */}
+        <div className="card">
+          <div className="section-label" style={{ margin: '0 0 12px' }}>Medical Conditions</div>
+          {history.length > 0 ? (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {history.map((h, i) => (
+                <div key={i} style={{
+                  display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                  padding: '10px 14px', background: 'var(--surface)', borderRadius: 'var(--radius)',
+                  border: '1px solid var(--border)'
+                }}>
+                  <div>
+                    <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--text)' }}>
+                      {h.condition_enc}
+                    </div>
+                    {h.notes_enc && (
+                      <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 2 }}>{h.notes_enc}</div>
+                    )}
+                  </div>
+                  <span style={{
+                    fontSize: 10, fontWeight: 800, textTransform: 'uppercase', letterSpacing: 1,
+                    padding: '4px 10px', borderRadius: 100,
+                    background: h.status === 'active' ? 'var(--warn)' : h.status === 'managed' ? '#3b82f6' : 'var(--green)',
+                    color: 'white'
+                  }}>
+                    {h.status || 'unknown'}
+                  </span>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p style={{ fontSize: 13, color: 'var(--muted)' }}>No medical conditions on record.</p>
+          )}
+        </div>
 
         {/* ── Personal Information ── */}
         <div className="card">
@@ -215,16 +271,6 @@ export default function StudentDashboard() {
             <DataRow label="Name" value={emergencyContact.name} />
             <DataRow label="Relation" value={emergencyContact.relationship} />
             <DataRow label="Phone" value={emergencyContact.phone} />
-          </div>
-        )}
-
-        {/* ── Medical History ── */}
-        {history.length > 0 && (
-          <div className="card">
-            <div className="section-label" style={{ margin: '0 0 12px' }}>Medical History</div>
-            {history.map((h, i) => (
-              <DataRow key={i} label={h.condition_enc} value={`${h.status}${h.notes_enc ? ' — ' + h.notes_enc : ''}`} />
-            ))}
           </div>
         )}
 

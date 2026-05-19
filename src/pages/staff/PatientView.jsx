@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { supabase, supabaseAdmin } from '../../lib/supabase'
 import { purgeStudentFiles } from '../../lib/offlineCache'
+import { getR2DownloadUrl, deleteFromR2 } from '../../lib/r2-storage'
 import AllergyBanner from '../../components/AllergyBanner'
 import VisitHistory from './VisitHistory'
 import NewVisitForm from './NewVisitForm'
@@ -103,11 +104,12 @@ export default function PatientView() {
       // 2. Delete all medical history
       await supabase.from('medical_history').delete().eq('student_id', id)
 
-      // 3. Delete uploaded files from storage and document records
-      for (const doc of documents) {
-        if (doc.storage_path_enc) {
-          await supabase.storage.from('medical-documents').remove([doc.storage_path_enc])
-        }
+      // 3. Delete uploaded files from R2 and document records
+      const r2Paths = documents
+        .map(doc => doc.storage_path_enc)
+        .filter(Boolean)
+      if (r2Paths.length > 0) {
+        try { await deleteFromR2(r2Paths) } catch {}
       }
       await supabase.from('documents').delete().eq('student_id', id)
 
@@ -171,12 +173,11 @@ export default function PatientView() {
   }
 
   const downloadDoc = async (doc) => {
-    const { data, error } = await supabase.storage
-      .from('medical-documents')
-      .createSignedUrl(doc.storage_path_enc, 300) // 5 min expiry
-
-    if (!error && data?.signedUrl) {
-      window.open(data.signedUrl, '_blank')
+    try {
+      const url = await getR2DownloadUrl(doc.storage_path_enc)
+      window.open(url, '_blank')
+    } catch (err) {
+      console.error('Download failed:', err)
     }
   }
 

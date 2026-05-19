@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { supabase, getUser } from '../../lib/supabase'
 import { extractMedicalData } from '../../lib/gemini-extractor'
 import { hashMatricNo } from '../../lib/crypto'
+import { uploadToR2 } from '../../lib/r2-storage'
 
 function StepDots({ current, total }) {
   return (
@@ -253,14 +254,15 @@ export default function StudentOnboarding() {
       const matricHash = await hashMatricNo(matricNo)
       const { personal, clinical } = extracted
 
-      // Upload medical document to Supabase Storage
+      // Upload medical document to Cloudflare R2
       let docPath = null
       if (file) {
-        const docName = `${matricHash}-doc-${Date.now()}.${file.name.split('.').pop()}`
-        const { error: docErr } = await supabase.storage
-          .from('medical-documents')
-          .upload(docName, file, { upsert: true })
-        if (!docErr) docPath = docName
+        try {
+          const result = await uploadToR2(file, matricHash)
+          docPath = result.storagePath
+        } catch (uploadErr) {
+          console.warn('R2 upload failed, continuing without document:', uploadErr.message)
+        }
       }
 
       // Insert student record
@@ -357,7 +359,7 @@ export default function StudentOnboarding() {
 
       <div className="consent-box">
         <p className="consent-text">
-          OCTAL Medical Center (Caleb University) will store your health records securely
+          Caleb University Health Center will store your health records securely
           in an encrypted database. Your data will only be accessed by authorized
           health center staff for the purpose of providing you medical care.
           {'\n\n'}
@@ -367,7 +369,7 @@ export default function StudentOnboarding() {
         </p>
         <label className="consent-check">
           <input type="checkbox" checked={consent} onChange={e => setConsent(e.target.checked)} />
-          <span>I understand and consent to my medical information being stored and used by OCTAL Health Center.</span>
+          <span>I understand and consent to my medical information being stored and used by Caleb University Health Center.</span>
         </label>
       </div>
 
