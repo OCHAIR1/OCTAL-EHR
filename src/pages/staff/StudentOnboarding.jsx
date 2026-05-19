@@ -31,9 +31,15 @@ async function scrapeMatricNumbers(file) {
   const isBinary = mime.includes('pdf') || mime.includes('image')
 
   const model = genAI.getGenerativeModel({
-    model: 'gemini-2.0-flash',
+    model: 'gemini-2.5-flash',
     generationConfig: { temperature: 0, responseMimeType: 'application/json' }
   })
+
+  const SCRAPE_PROMPT = `Extract ALL student matric numbers AND their associated email addresses from this document.
+Nigerian universities use matric formats like 24/15554, CSC/2021/001, ENG/2020/042, 19/0101, etc.
+Emails can be any format — school emails (e.g. student@calebuniversity.edu.ng) OR personal emails (e.g. student@gmail.com).
+If you find a matric number but no email next to it, still include it with email as null.
+Return ONLY valid JSON: {"students": [{"matric": "...", "email": "...or null"}, ...]}. No explanation.`
 
   let parts = []
 
@@ -41,26 +47,34 @@ async function scrapeMatricNumbers(file) {
     const base64 = await fileToBase64(file)
     parts = [
       { inlineData: { mimeType: mime, data: base64 } },
-      { text: 'Extract ALL student matric numbers from this document. Nigerian universities use formats like 24/15554, CSC/2021/001, ENG/2020/042, 19/0101, etc. Return ONLY valid JSON: {"matric_numbers": ["...", "..."]}. No explanation.' }
+      { text: SCRAPE_PROMPT }
     ]
   } else {
     const text = await file.text()
     parts = [
-      { text: `Extract ALL student matric numbers from this text. Nigerian universities use formats like 24/15554, CSC/2021/001, ENG/2020/042, 19/0101, etc.\n\nText:\n${text}\n\nReturn ONLY valid JSON: {"matric_numbers": ["...", "..."]}. No explanation.` }
+      { text: `${SCRAPE_PROMPT}\n\nDocument text:\n${text}` }
     ]
   }
 
   const result = await model.generateContent(parts)
   let raw = result.response.text()
 
+  let parsed
   try {
-    const parsed = JSON.parse(raw)
-    return (parsed.matric_numbers || []).map(m => m.trim().toUpperCase()).filter(Boolean)
+    parsed = JSON.parse(raw)
   } catch {
     const cleaned = raw.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim()
-    const parsed = JSON.parse(cleaned)
-    return (parsed.matric_numbers || []).map(m => m.trim().toUpperCase()).filter(Boolean)
+    parsed = JSON.parse(cleaned)
   }
+
+  // Support both old format {matric_numbers: []} and new {students: [{matric, email}]}
+  if (parsed.students) {
+    return parsed.students
+      .filter(s => s.matric)
+      .map(s => ({ matric: s.matric.trim().toUpperCase(), email: (s.email || '').trim().toLowerCase() }))
+  }
+  // Fallback: old format
+  return (parsed.matric_numbers || []).map(m => ({ matric: m.trim().toUpperCase(), email: '' }))
 }
 
 // ── Component ───────────────────────────────────────────────
@@ -76,8 +90,8 @@ export default function StaffStudentOnboarding() {
   const fileRef = useRef()
   const [scraping, setScraping] = useState(false)
   const [scrapeError, setScrapeError] = useState(null)
-  const [scrapedMatrics, setScrapedMatrics] = useState([])
-  const [editableMatrics, setEditableMatrics] = useState([])
+  const [scrapedEntries, setScrapedEntries] = useState([])  // {matric, email}[]
+  const [editableEntries, setEditableEntries] = useState([]) // {matric, email}[]
 
   // Manual entry state
   const [manualMatric, setManualMatric] = useState('')
@@ -95,8 +109,8 @@ export default function StaffStudentOnboarding() {
     const dropped = e.dataTransfer?.files?.[0] || e.target.files?.[0]
     if (dropped) {
       setFile(dropped)
-      setScrapedMatrics([])
-      setEditableMatrics([])
+      setScrapedEntries([])
+      setEditableEntries([])
       setScrapeError(null)
       setResults(null)
     }
@@ -107,12 +121,12 @@ export default function StaffStudentOnboarding() {
     setScraping(true)
     setScrapeError(null)
     try {
-      const matrics = await scrapeMatricNumbers(file)
-      if (matrics.length === 0) {
+      const entries = await scrapeMatricNumbers(file)
+      if (entries.length === 0) {
         setScrapeError('No matric numbers found in this file. Try a different file or enter them manually.')
       } else {
-        setScrapedMatrics(matrics)
-        setEditableMatrics([...matrics])
+        setScrapedEntries(entries)
+        setEditableEntries(entries.map(e => ({ ...e })))
       }
     } catch (err) {
       setScrapeError(err.message || 'Failed to read the file.')
@@ -121,8 +135,12 @@ export default function StaffStudentOnboarding() {
     }
   }
 
-  const handleRemoveMatric = (idx) => {
-    setEditableMatrics(prev => prev.filter((_, i) => i !== idx))
+  const handleRemoveEntry = (idx) => {
+    setEditableEntries(prev => prev.filter((_, i) => i !== idx))
+  }
+
+  const handleEntryEmailChange = (idx, email) => {
+    setEditableEntries(prev => prev.map((e, i) => i === idx ? { ...e, email } : e))
   }
 
   const handleAddManual = () => {
@@ -139,10 +157,8 @@ export default function StaffStudentOnboarding() {
     setManualList(prev => prev.filter((_, i) => i !== idx))
   }
 
-  // For file upload tab: list of matric strings
-  // For manual tab: list of { matric, email } objects
   const getActiveEntries = () => {
-    if (tab === 0) return editableMatrics.map(m => ({ matric: m, email: '' }))
+    if (tab === 0) return editableEntries
     return manualList
   }
 
@@ -236,11 +252,11 @@ export default function StaffStudentOnboarding() {
 
     setResults({ created, skipped, errors })
     setCreating(false)
-    if (tab === 0) setEditableMatrics([])
+    if (tab === 0) setEditableEntries([])
     else setManualList([])
   }
 
-  const activeCount = tab === 0 ? editableMatrics.length : manualList.length
+  const activeCount = tab === 0 ? editableEntries.length : manualList.length
 
   return (
     <div className="app-shell app-shell--staff">
@@ -305,32 +321,47 @@ export default function StaffStudentOnboarding() {
 
             {scrapeError && <div className="error-box" style={{ marginTop: 12 }}>⚠ {scrapeError}</div>}
 
-            {file && scrapedMatrics.length === 0 && (
+            {file && scrapedEntries.length === 0 && (
               <div className="btn-row" style={{ marginTop: 16 }}>
                 <button className="btn-primary" disabled={scraping} onClick={handleScrape}>
-                  {scraping ? 'Reading file…' : 'Extract Matric Numbers →'}
+                  {scraping ? 'Reading file…' : 'Extract Students →'}
                 </button>
               </div>
             )}
 
-            {editableMatrics.length > 0 && (
+            {editableEntries.length > 0 && (
               <>
                 <div className="section-label" style={{ marginTop: 24 }}>
-                  Found {editableMatrics.length} matric number{editableMatrics.length !== 1 ? 's' : ''}
-                  <span style={{ fontWeight: 400, color: 'var(--muted)', marginLeft: 8 }}>— remove any that are wrong</span>
+                  Found {editableEntries.length} student{editableEntries.length !== 1 ? 's' : ''}
+                  <span style={{ fontWeight: 400, color: 'var(--muted)', marginLeft: 8 }}>— verify emails and remove any wrong entries</span>
                 </div>
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 16 }}>
-                  {editableMatrics.map((m, i) => (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 16 }}>
+                  {editableEntries.map((entry, i) => (
                     <div key={i} style={{
-                      display: 'flex', alignItems: 'center', gap: 6,
+                      display: 'flex', alignItems: 'center', gap: 8,
                       background: 'var(--surface)', border: '1px solid var(--border)',
-                      borderRadius: 6, padding: '4px 10px',
-                      fontFamily: 'DM Mono, monospace', fontSize: 12
+                      borderRadius: 'var(--radius)', padding: '6px 10px'
                     }}>
-                      {m}
+                      <span style={{
+                        fontFamily: 'DM Mono, monospace', fontSize: 12, fontWeight: 700,
+                        whiteSpace: 'nowrap', minWidth: 90, color: 'var(--text)'
+                      }}>
+                        {entry.matric}
+                      </span>
+                      <input
+                        type="email"
+                        placeholder="Student email (school or personal)"
+                        value={entry.email}
+                        onChange={e => handleEntryEmailChange(i, e.target.value)}
+                        style={{
+                          flex: 1, height: 34, border: '1.5px solid var(--border)', borderRadius: 6,
+                          padding: '0 10px', fontFamily: "'Outfit', sans-serif", fontSize: 12,
+                          color: 'var(--text)', background: 'var(--white)', outline: 'none'
+                        }}
+                      />
                       <button
-                        onClick={() => handleRemoveMatric(i)}
-                        style={{ background: 'none', border: 'none', color: 'var(--muted)', cursor: 'pointer', fontSize: 14, lineHeight: 1, padding: 0 }}
+                        onClick={() => handleRemoveEntry(i)}
+                        style={{ background: 'none', border: 'none', color: 'var(--muted)', cursor: 'pointer', fontSize: 16, lineHeight: 1, padding: '0 4px' }}
                       >×</button>
                     </div>
                   ))}
@@ -362,7 +393,7 @@ export default function StaffStudentOnboarding() {
               <div style={{ display: 'flex', gap: 8 }}>
                 <input
                   type="email"
-                  placeholder="Student email e.g. ochuko@calebuniversity.edu.ng"
+                  placeholder="Student email (school or personal)"
                   value={manualEmail}
                   onChange={e => setManualEmail(e.target.value)}
                   onKeyDown={e => e.key === 'Enter' && handleAddManual()}
