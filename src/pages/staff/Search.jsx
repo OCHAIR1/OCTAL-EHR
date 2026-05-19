@@ -1,20 +1,22 @@
 import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { supabase, signOut } from '../../lib/supabase'
+import { supabase } from '../../lib/supabase'
 import { hashMatricNo } from '../../lib/crypto'
-import { searchCachedPatient, isOnline } from '../../lib/offline-cache'
+import { isOnline, cacheStudentRecord, getCachedStudentRecord } from '../../lib/offlineCache'
+import { isClinicPC } from '../../components/StaffSidebar'
 
 export default function StaffSearch() {
   const [query, setQuery] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
   const [notFound, setNotFound] = useState(false)
-  const [online, setOnline] = useState(navigator.onLine)
+  const [offline, setOffline] = useState(!navigator.onLine)
   const navigate = useNavigate()
 
+  // Track online/offline status
   useEffect(() => {
-    const goOnline = () => setOnline(true)
-    const goOffline = () => setOnline(false)
+    const goOnline = () => setOffline(false)
+    const goOffline = () => setOffline(true)
     window.addEventListener('online', goOnline)
     window.addEventListener('offline', goOffline)
     return () => {
@@ -23,6 +25,15 @@ export default function StaffSearch() {
     }
   }, [])
 
+  /**
+   * SEARCH LOGIC:
+   *   1. Hash the matric number
+   *   2. Check navigator.onLine
+   *      a. ONLINE  → query Supabase (live, encrypted), cache the result, navigate to patient view
+   *      b. OFFLINE → check IndexedDB for a cached record
+   *         - Found & fresh → navigate to patient view (data was cached from prior online session)
+   *         - Not found     → show "Offline — record not cached" message
+   */
   const handleSearch = async (e) => {
     e.preventDefault()
     if (!query.trim()) return
@@ -35,10 +46,10 @@ export default function StaffSearch() {
       const hash = await hashMatricNo(query)
 
       if (isOnline()) {
-        // ── ONLINE: Query Supabase (fresh) ──
+        // ── ONLINE PATH ────────────────────────────────────────
         const { data, error: dbErr } = await supabase
           .from('students')
-          .select('id, matric_no_enc, full_name_enc, blood_group, genotype, gender, department, faculty, level, status, photo_url_enc, profile_verified, profile_open')
+          .select('id, matric_no_enc, full_name_enc, blood_group, genotype, gender, department, faculty, level, status, photo_url_enc, profile_verified')
           .eq('matric_no_hash', hash)
           .not('status', 'in', '("deleted","pending_deletion")')
           .single()
@@ -46,6 +57,11 @@ export default function StaffSearch() {
         if (dbErr || !data) {
           setNotFound(true)
           return
+        }
+
+        // Cache the result for offline use — only on Clinic PCs
+        if (isClinicPC()) {
+          await cacheStudentRecord(hash, data)
         }
 
         // Audit log
@@ -61,27 +77,23 @@ export default function StaffSearch() {
 
         navigate(`/staff/patient/${data.id}`)
       } else {
-        // ── OFFLINE: Query IndexedDB (cached) ──
-        const cached = await searchCachedPatient(hash)
+        // ── OFFLINE PATH ───────────────────────────────────────
+        const cached = await getCachedStudentRecord(hash)
 
         if (!cached) {
           setNotFound(true)
-          setError('You are offline and this patient has not been cached locally. Connect to the internet and search again.')
+          setError("You are offline. This student's record has not been cached. Search while connected to load it.")
           return
         }
 
-        navigate(`/staff/patient/${cached.id}`)
+        // Navigate using cached student ID — PatientView will use IndexedDB data
+        navigate(`/staff/patient/${cached.student_id}?offline=1`)
       }
     } catch (err) {
       setError(err.message || 'Search failed.')
     } finally {
       setLoading(false)
     }
-  }
-
-  const handleLogout = async () => {
-    await signOut()
-    navigate('/staff/login')
   }
 
   return (
@@ -91,30 +103,35 @@ export default function StaffSearch() {
           <div className="header-brand">OCTAL-EHR</div>
           <div className="header-sub">Medical Staff Dashboard</div>
         </div>
-        <div className="header-actions">
-          {!online && (
-            <span style={{
-              fontSize: 10, fontWeight: 800, padding: '4px 10px',
-              background: 'var(--warn-bg)', color: 'var(--warn)',
-              borderRadius: 100, letterSpacing: 1, textTransform: 'uppercase'
-            }}>⚡ Offline</span>
-          )}
-          <button className="btn-logout" onClick={handleLogout}>Logout</button>
-        </div>
       </div>
+
+      {/* Offline indicator */}
+      {offline && (
+        <div style={{
+          background: 'var(--warning)',
+          color: '#fff',
+          fontSize: 12,
+          fontFamily: 'Outfit, sans-serif',
+          padding: '6px 20px',
+          textAlign: 'center',
+          fontWeight: 600
+        }}>
+          ⚡ Offline mode — only previously cached records are searchable
+        </div>
+      )}
 
       <div className="content content--staff">
         <h1 className="page-title">Patient Lookup</h1>
         <p className="page-desc">
           Enter a student's matric number to pull up their medical record.
-          {!online && <span style={{ color: 'var(--warn)', fontWeight: 600 }}> (Searching offline cache)</span>}
+          {offline && ' (Offline — cached records only)'}
         </p>
 
         <form onSubmit={handleSearch}>
           <div className="search-bar">
             <input
               type="text"
-              placeholder="e.g. CSC/2021/001"
+              placeholder="e.g. 24/15554"
               value={query}
               onChange={e => setQuery(e.target.value.toUpperCase())}
               maxLength={20}
@@ -125,7 +142,7 @@ export default function StaffSearch() {
           </div>
         </form>
 
-        {error && <div className="error-box">⚠ {error}</div>}
+        {error && <div className={`${offline ? 'warning-box' : 'error-box'}`} style={{ marginTop: 12 }}>⚠ {error}</div>}
 
         {notFound && !error && (
           <div className="empty-state">
@@ -133,7 +150,7 @@ export default function StaffSearch() {
             <h3>No record found</h3>
             <p>
               No student found with matric number <strong>{query}</strong>.
-              {!online ? ' This record may not be cached locally.' : ' Check the number and try again.'}
+              {offline ? ' They may not have been searched while online.' : ' Check the number and try again.'}
             </p>
           </div>
         )}
@@ -142,7 +159,11 @@ export default function StaffSearch() {
           <div className="empty-state">
             <div className="empty-state-icon">🏥</div>
             <h3>Caleb University Health Center</h3>
-            <p>Search for a student by their matric number to view their medical record.</p>
+            <p>
+              {offline
+                ? 'You are offline. Search for a student whose record was cached during a prior online session.'
+                : 'Search for a student by their matric number to view their medical record.'}
+            </p>
           </div>
         )}
       </div>

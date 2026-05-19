@@ -2,8 +2,21 @@ import { createClient } from '@supabase/supabase-js'
 
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL
 const supabaseKey = import.meta.env.VITE_SUPABASE_ANON_KEY
+const serviceRoleKey = import.meta.env.VITE_SUPABASE_SERVICE_ROLE_KEY
 
+// Standard client — used for normal operations (student reads, staff queries, etc.)
 export const supabase = createClient(supabaseUrl, supabaseKey)
+
+// Admin client — used ONLY for staff admin operations:
+//   - Creating student auth accounts (no email verification)
+//   - Resetting student passwords (direct, no email)
+// This client bypasses RLS and has full admin access.
+export const supabaseAdmin = createClient(supabaseUrl, serviceRoleKey, {
+  auth: {
+    autoRefreshToken: false,
+    persistSession: false
+  }
+})
 
 // ── Auth helpers ──────────────────────────────────────────
 

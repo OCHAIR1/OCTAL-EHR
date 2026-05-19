@@ -1,10 +1,10 @@
 import { useState, useEffect } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { supabase } from '../../lib/supabase'
+import { supabase, supabaseAdmin } from '../../lib/supabase'
+import { purgeStudentFiles } from '../../lib/offlineCache'
 import AllergyBanner from '../../components/AllergyBanner'
 import VisitHistory from './VisitHistory'
 import NewVisitForm from './NewVisitForm'
-import { cachePatientRecord, getCachedPatientFull, isOnline } from '../../lib/offline-cache'
 
 export default function PatientView() {
   const { id } = useParams()
@@ -17,82 +17,56 @@ export default function PatientView() {
   const [error, setError] = useState(null)
   const [showNewVisit, setShowNewVisit] = useState(false)
   const [visitRefreshKey, setVisitRefreshKey] = useState(0)
-  const [online, setOnline] = useState(navigator.onLine)
-  const [fromCache, setFromCache] = useState(false)
+
+  // Account reset state
+  const [showResetModal, setShowResetModal] = useState(false)
+  const [resetConfirmMatric, setResetConfirmMatric] = useState('')
+  const [resetting, setResetting] = useState(false)
+  const [resetError, setResetError] = useState(null)
 
   useEffect(() => {
     loadPatient()
-    const goOnline = () => setOnline(true)
-    const goOffline = () => setOnline(false)
-    window.addEventListener('online', goOnline)
-    window.addEventListener('offline', goOffline)
-    return () => {
-      window.removeEventListener('online', goOnline)
-      window.removeEventListener('offline', goOffline)
-    }
   }, [id])
 
   const loadPatient = async () => {
     setLoading(true)
-    setFromCache(false)
+    try {
+      // Fetch student
+      const { data: student, error: sErr } = await supabase
+        .from('students')
+        .select('*')
+        .eq('id', id)
+        .single()
+      if (sErr) throw sErr
+      setPatient(student)
 
-    if (isOnline()) {
-      try {
-        // ── ONLINE: Fetch from Supabase ──
-        const { data: student, error: sErr } = await supabase
-          .from('students')
-          .select('*')
-          .eq('id', id)
-          .single()
-        if (sErr) throw sErr
-        setPatient(student)
+      // Fetch allergies
+      const { data: allergyData } = await supabase
+        .from('allergies')
+        .select('*')
+        .eq('student_id', id)
+      setAllergies(allergyData || [])
 
-        const { data: allergyData } = await supabase
-          .from('allergies').select('*').eq('student_id', id)
-        setAllergies(allergyData || [])
+      // Fetch medical history
+      const { data: histData } = await supabase
+        .from('medical_history')
+        .select('*')
+        .eq('student_id', id)
+      setHistory(histData || [])
 
-        const { data: histData } = await supabase
-          .from('medical_history').select('*').eq('student_id', id)
-        setHistory(histData || [])
+      // Fetch documents
+      const { data: docData } = await supabase
+        .from('documents')
+        .select('*')
+        .eq('student_id', id)
+        .order('created_at', { ascending: false })
+      setDocuments(docData || [])
 
-        const { data: docData } = await supabase
-          .from('documents').select('*').eq('student_id', id)
-          .order('created_at', { ascending: false })
-        setDocuments(docData || [])
-
-        // Cache everything locally for offline use
-        try {
-          await cachePatientRecord({
-            student,
-            allergies: allergyData || [],
-            history: histData || [],
-            visits: [], // visits are loaded by VisitHistory component
-            documents: docData || []
-          })
-        } catch { /* indexedDB failure is non-fatal */ }
-
-      } catch (err) {
-        setError(err.message)
-      }
-    } else {
-      // ── OFFLINE: Load from IndexedDB ──
-      try {
-        const cached = await getCachedPatientFull(id)
-        if (cached.student) {
-          setPatient(cached.student)
-          setAllergies(cached.allergies || [])
-          setHistory(cached.history || [])
-          setDocuments(cached.documents || [])
-          setFromCache(true)
-        } else {
-          setError('This patient is not available offline. Connect to the internet to load their record.')
-        }
-      } catch (err) {
-        setError('Failed to load cached data: ' + err.message)
-      }
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setLoading(false)
     }
-
-    setLoading(false)
   }
 
   const toggleProfileOpen = async (open) => {
@@ -114,6 +88,85 @@ export default function PatientView() {
         resource_id: id,
         metadata: { profile_open: open }
       })
+    }
+  }
+
+  // ── Account Reset ────────────────────────────────────────
+  const handleAccountReset = async () => {
+    setResetting(true)
+    setResetError(null)
+
+    try {
+      // 1. Delete all allergies
+      await supabase.from('allergies').delete().eq('student_id', id)
+
+      // 2. Delete all medical history
+      await supabase.from('medical_history').delete().eq('student_id', id)
+
+      // 3. Delete uploaded files from storage and document records
+      for (const doc of documents) {
+        if (doc.storage_path_enc) {
+          await supabase.storage.from('medical-documents').remove([doc.storage_path_enc])
+        }
+      }
+      await supabase.from('documents').delete().eq('student_id', id)
+
+      // 3b. Purge local file cache for this student
+      await purgeStudentFiles(id)
+
+      // 4. Delete all visits (cascades to vitals, diagnoses, prescriptions)
+      await supabase.from('visits').delete().eq('student_id', id)
+
+      // 5. Reset the student row — keep matric hash + matric_no_enc, wipe everything else
+      const { error: updateErr } = await supabase.from('students').update({
+        full_name_enc: '',
+        date_of_birth_enc: null,
+        phone_number_enc: null,
+        home_address_enc: null,
+        email_enc: null,
+        photo_url_enc: null,
+        emergency_contact_enc: null,
+        blood_group: 'unknown',
+        genotype: 'unknown',
+        gender: null,
+        department: null,
+        faculty: null,
+        level: null,
+        ndpr_consent: false,
+        ndpr_consent_at: null,
+        ai_extraction_raw: null,
+        profile_verified: false,
+        profile_open: true,
+        updated_at: new Date().toISOString()
+      }).eq('id', id)
+
+      if (updateErr) throw updateErr
+
+      // 6. Reset password to default — direct admin control, no email needed
+      if (patient.auth_user_id) {
+        await supabaseAdmin.auth.admin.updateUserById(patient.auth_user_id, {
+          password: 'Calebuniv'
+        })
+      }
+
+      // 7. Audit log
+      const user = (await supabase.auth.getUser()).data.user
+      await supabase.from('audit_log').insert({
+        actor_id: user?.id,
+        actor_role: 'staff',
+        action: 'ACCOUNT_RESET',
+        resource_type: 'students',
+        resource_id: id,
+        metadata: { matric_no_hash: patient.matric_no_hash, matric_no_enc: patient.matric_no_enc }
+      })
+
+      // Done — redirect back to search
+      setShowResetModal(false)
+      navigate('/staff/search')
+    } catch (err) {
+      setResetError(err.message || 'Reset failed. Try again.')
+    } finally {
+      setResetting(false)
     }
   }
 
@@ -179,15 +232,6 @@ export default function PatientView() {
         <div>
           <div className="header-brand">OCTAL-EHR</div>
           <div className="header-sub">Patient Record</div>
-        </div>
-        <div className="header-actions">
-          {fromCache && (
-            <span style={{ fontSize: 10, fontWeight: 800, padding: '4px 10px', background: 'var(--warn-bg)', color: 'var(--warn)', borderRadius: 100, letterSpacing: 1, textTransform: 'uppercase' }}>📦 Cached</span>
-          )}
-          {!online && (
-            <span style={{ fontSize: 10, fontWeight: 800, padding: '4px 10px', background: 'var(--warn-bg)', color: 'var(--warn)', borderRadius: 100, letterSpacing: 1, textTransform: 'uppercase' }}>⚡ Offline</span>
-          )}
-          <button className="btn-logout" onClick={() => navigate('/staff/search')}>← Search</button>
         </div>
       </div>
 
@@ -303,7 +347,7 @@ export default function PatientView() {
                 <div>
                   <div className="doc-item-name">{doc.original_filename || 'Document'}</div>
                   <div className="doc-item-meta">
-                    {doc.document_type} · {doc.file_size_bytes ? `${Math.round(doc.file_size_bytes / 1024)}KB` : ''} · Confidence: {doc.ai_confidence ? `${Math.round(doc.ai_confidence * 100)}%` : '—'}
+                    {doc.document_type} · {doc.file_size_bytes ? `${Math.round(doc.file_size_bytes / 1024)}KB` : ''}
                   </div>
                 </div>
                 <span className="doc-item-dl" onClick={() => downloadDoc(doc)}>Download ↓</span>
@@ -311,6 +355,103 @@ export default function PatientView() {
             ))
           )}
         </div>
+
+        {/* ── Account Reset ── */}
+        <div style={{
+          marginTop: 32, padding: 20, borderRadius: 'var(--radius-lg)',
+          border: '1.5px solid var(--alert)', background: 'var(--alert-bg)'
+        }}>
+          <div style={{ fontSize: 11, fontWeight: 800, textTransform: 'uppercase', letterSpacing: 1, color: 'var(--alert)', marginBottom: 4 }}>
+            ⚠ Danger Zone
+          </div>
+          <p style={{ fontSize: 12, color: 'var(--muted)', lineHeight: 1.6, marginBottom: 12 }}>
+            Reset this student's account. This permanently deletes all their medical data,
+            uploaded documents, visit history, and resets their password to the default.
+            The student will need to onboard again from scratch.
+          </p>
+          <button
+            onClick={() => { setShowResetModal(true); setResetConfirmMatric(''); setResetError(null) }}
+            style={{
+              background: 'var(--alert)', color: 'white', border: 'none',
+              padding: '10px 20px', borderRadius: 'var(--radius)',
+              fontSize: 12, fontWeight: 700, cursor: 'pointer',
+              fontFamily: "'Outfit', sans-serif"
+            }}
+          >
+            ⚠ Reset Student Account
+          </button>
+        </div>
+
+        {/* ── Reset Confirmation Modal ── */}
+        {showResetModal && (
+          <div style={{
+            position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            zIndex: 9999, padding: 20
+          }}>
+            <div style={{
+              background: 'var(--white)', borderRadius: 'var(--radius-lg)',
+              padding: 32, maxWidth: 420, width: '100%',
+              boxShadow: '0 24px 48px rgba(0,0,0,0.15)'
+            }}>
+              <h3 style={{ fontFamily: "'DM Serif Display', serif", fontSize: 20, marginBottom: 8, color: 'var(--alert)' }}>
+                ⚠ Reset Account
+              </h3>
+              <p style={{ fontSize: 13, color: 'var(--muted)', lineHeight: 1.6, marginBottom: 16 }}>
+                This will <strong style={{ color: 'var(--alert)' }}>permanently delete</strong> all medical data
+                for <strong>{patient.matric_no_enc}</strong> and reset their password to the default.
+                The student will need to onboard again. <strong>This cannot be undone.</strong>
+              </p>
+
+              <p style={{ fontSize: 12, fontWeight: 700, color: 'var(--text)', marginBottom: 8 }}>
+                Type the matric number to confirm:
+              </p>
+              <input
+                type="text"
+                placeholder={patient.matric_no_enc}
+                value={resetConfirmMatric}
+                onChange={e => setResetConfirmMatric(e.target.value.toUpperCase())}
+                style={{
+                  width: '100%', height: 48, border: '2px solid var(--alert)',
+                  borderRadius: 'var(--radius)', padding: '0 16px',
+                  fontFamily: "'DM Mono', monospace", fontSize: 14,
+                  letterSpacing: 1, textTransform: 'uppercase',
+                  color: 'var(--text)', background: 'var(--white)', outline: 'none',
+                  marginBottom: 16
+                }}
+              />
+
+              {resetError && <div className="error-box">⚠ {resetError}</div>}
+
+              <div style={{ display: 'flex', gap: 8 }}>
+                <button
+                  disabled={resetConfirmMatric !== patient.matric_no_enc || resetting}
+                  onClick={handleAccountReset}
+                  style={{
+                    flex: 1, height: 48, background: resetConfirmMatric === patient.matric_no_enc ? 'var(--alert)' : 'var(--border)',
+                    color: resetConfirmMatric === patient.matric_no_enc ? 'white' : 'var(--muted)',
+                    border: 'none', borderRadius: 'var(--radius)',
+                    fontSize: 13, fontWeight: 700, cursor: resetConfirmMatric === patient.matric_no_enc ? 'pointer' : 'not-allowed',
+                    fontFamily: "'Outfit', sans-serif"
+                  }}
+                >
+                  {resetting ? 'Resetting…' : 'Permanently Reset'}
+                </button>
+                <button
+                  onClick={() => setShowResetModal(false)}
+                  style={{
+                    flex: 1, height: 48, background: 'transparent',
+                    color: 'var(--text)', border: '2px solid var(--border)',
+                    borderRadius: 'var(--radius)', fontSize: 13, fontWeight: 700,
+                    cursor: 'pointer', fontFamily: "'Outfit', sans-serif"
+                  }}
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   )

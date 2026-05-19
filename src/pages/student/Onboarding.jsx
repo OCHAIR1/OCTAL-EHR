@@ -52,13 +52,25 @@ export default function StudentOnboarding() {
   const [consent, setConsent] = useState(false)
   const [submitting, setSubmitting] = useState(false)
 
-  const totalSteps = 4  // Upload → Verify → Consent → Done
+  // Steps: 0=Upload, 1=Verify, 2=Consent, 3=Done
+  const totalSteps = 4
 
   useEffect(() => {
-    getUser().then(u => {
+    getUser().then(async (u) => {
       if (!u) { navigate('/student/login'); return }
       setUser(u)
       setMatricNo(u.user_metadata?.matric_no || '')
+
+      // Check if student already has a completed profile → redirect to dashboard
+      const { data: student } = await supabase
+        .from('students')
+        .select('id, profile_verified, profile_open')
+        .eq('auth_user_id', u.id)
+        .maybeSingle()
+
+      if (student && student.profile_verified && !student.profile_open) {
+        navigate('/student/dashboard')
+      }
     })
   }, [navigate])
 
@@ -91,7 +103,7 @@ export default function StudentOnboarding() {
       <h1 className="page-title">Upload Medical Document</h1>
       <p className="page-desc">
         Upload your medical history form, doctor's letter, or any health document
-        from your physician. Our AI will extract your details automatically.
+        from your physician. Your details will be extracted automatically.
       </p>
 
       <div
@@ -113,7 +125,7 @@ export default function StudentOnboarding() {
 
       <div className="btn-row">
         <button className="btn-primary" disabled={!file} onClick={handleExtract}>
-          Scan with AI →
+          Scan Document →
         </button>
       </div>
     </>
@@ -125,7 +137,7 @@ export default function StudentOnboarding() {
       <div className="spinner" />
       <h2 className="page-title" style={{ fontSize: 22, marginBottom: 8 }}>Scanning document…</h2>
       <p className="page-desc" style={{ maxWidth: 260, marginBottom: 0 }}>
-        Gemini AI is reading your medical document and extracting your health details. This takes 5–15 seconds.
+        Reading your medical document and extracting your health details. This takes 5–15 seconds.
       </p>
     </div>
   )
@@ -145,7 +157,7 @@ export default function StudentOnboarding() {
 
         <div className="confidence-wrap">
           <div className="confidence-row">
-            <span className="confidence-label">AI Accuracy</span>
+            <span className="confidence-label">Extraction Accuracy</span>
             <span className="confidence-pct">{conf}%</span>
           </div>
           <div className="confidence-track">
@@ -214,7 +226,7 @@ export default function StudentOnboarding() {
       const matricHash = await hashMatricNo(matricNo)
       const { personal, clinical } = extracted
 
-      // Upload medical document
+      // Upload medical document to Supabase Storage
       let docPath = null
       if (file) {
         const docName = `${matricHash}-doc-${Date.now()}.${file.name.split('.').pop()}`
@@ -360,6 +372,12 @@ export default function StudentOnboarding() {
           The health center staff will review your submitted document and verify
           your profile. Keep your matric number handy for every health center visit.
         </p>
+      </div>
+
+      <div className="btn-row" style={{ marginTop: 24, width: '100%' }}>
+        <button className="btn-primary" onClick={() => navigate('/student/dashboard')}>
+          Go to Dashboard →
+        </button>
       </div>
     </div>
   )

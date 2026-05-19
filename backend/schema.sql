@@ -32,6 +32,8 @@ CREATE TYPE student_status AS ENUM (
   'deleted'
 );
 
+-- NOTE: Only 'doctor' role is used for Caleb University.
+-- Other roles are defined for future extensibility but NOT enforced by RLS.
 CREATE TYPE staff_role AS ENUM (
   'doctor',
   'nurse',
@@ -73,14 +75,14 @@ CREATE TABLE staff (
   auth_user_id      UUID UNIQUE REFERENCES auth.users(id) ON DELETE SET NULL,
   full_name         TEXT NOT NULL,
   email             TEXT UNIQUE NOT NULL,
-  role              staff_role NOT NULL DEFAULT 'nurse',
+  role              staff_role NOT NULL DEFAULT 'doctor',
   department        TEXT,
   is_active         BOOLEAN DEFAULT TRUE,
   created_at        TIMESTAMPTZ DEFAULT NOW(),
   updated_at        TIMESTAMPTZ DEFAULT NOW()
 );
 
-COMMENT ON TABLE staff IS 'Health center staff — doctors, nurses, pharmacists, admins';
+COMMENT ON TABLE staff IS 'Health center medical staff — all doctors at Caleb University';
 
 
 -- ============================================================
@@ -311,15 +313,15 @@ RETURNS UUID AS $$
   SELECT id FROM students WHERE auth_user_id = auth.uid() LIMIT 1;
 $$ LANGUAGE sql SECURITY DEFINER;
 
--- STUDENTS: Staff (any role) can read all. Student can only read own.
+-- STUDENTS: Any staff can read and write. Student can only read own.
 CREATE POLICY students_staff_read ON students
   FOR SELECT USING (
-    current_staff_role() IN ('doctor','nurse','pharmacist','health_admin','super_admin')
+    current_staff_role() IS NOT NULL
   );
 
 CREATE POLICY students_staff_write ON students
   FOR ALL USING (
-    current_staff_role() IN ('doctor','health_admin','super_admin')
+    current_staff_role() IS NOT NULL
   );
 
 CREATE POLICY students_own_read ON students
@@ -335,7 +337,7 @@ CREATE POLICY allergies_staff_read ON allergies
 
 CREATE POLICY allergies_staff_write ON allergies
   FOR ALL USING (
-    current_staff_role() IN ('doctor','nurse','super_admin')
+    current_staff_role() IS NOT NULL
   );
 
 CREATE POLICY allergies_own_read ON allergies
@@ -354,10 +356,10 @@ CREATE POLICY documents_own_read ON documents
     student_id = current_student_id()
   );
 
--- AUDIT LOG: only super_admin and health_admin can read
+-- AUDIT LOG: any staff can read
 CREATE POLICY audit_admin_read ON audit_log
   FOR SELECT USING (
-    current_staff_role() IN ('super_admin','health_admin')
+    current_staff_role() IS NOT NULL
   );
 
 -- VISITS: staff can read/write, student read own
