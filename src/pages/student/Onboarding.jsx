@@ -1,6 +1,6 @@
 import { useState, useRef, useCallback, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { supabase, getUser } from '../../lib/supabase'
+import { supabase, supabaseAdmin, getUser } from '../../lib/supabase'
 import { extractMedicalData } from '../../lib/gemini-extractor'
 import { hashMatricNo } from '../../lib/crypto'
 import { uploadToR2 } from '../../lib/r2-storage'
@@ -61,21 +61,36 @@ export default function StudentOnboarding() {
   // Steps: 0=Upload, 1=Verify, 2=Consent, 3=Done
   const totalSteps = 4
 
+  // Track if we're updating an existing student row (reset or edit mode)
+  const [existingStudentId, setExistingStudentId] = useState(null)
+  const [isEditMode, setIsEditMode] = useState(false) // profile_open by admin
+
   useEffect(() => {
     getUser().then(async (u) => {
       if (!u) { navigate('/student/login'); return }
       setUser(u)
       setMatricNo(u.user_metadata?.matric_no || '')
 
-      // Check if student already has a completed profile → redirect to dashboard
+      // Check if student row already exists
       const { data: student } = await supabase
         .from('students')
-        .select('id, profile_verified, profile_open')
+        .select('id, profile_verified, profile_open, matric_no_enc')
         .eq('auth_user_id', u.id)
         .maybeSingle()
 
-      if (student && student.profile_verified && !student.profile_open) {
-        navigate('/student/dashboard')
+      if (student) {
+        if (student.profile_verified && !student.profile_open) {
+          // Completed, locked profile → go to dashboard
+          navigate('/student/dashboard')
+          return
+        }
+        // Either reset (profile_verified=false) or edit (profile_open=true) → allow onboarding
+        setExistingStudentId(student.id)
+        setIsEditMode(student.profile_verified && student.profile_open)
+        // Use matric from existing row if user_metadata is empty
+        if (!u.user_metadata?.matric_no && student.matric_no_enc) {
+          setMatricNo(student.matric_no_enc)
+        }
       }
     })
   }, [navigate])
@@ -323,34 +338,59 @@ export default function StudentOnboarding() {
         }
       }
 
-      // Insert student record
-      const { data: studentData, error: studentErr } = await supabase
-        .from('students')
-        .insert({
-          auth_user_id: user.id,
-          matric_no_hash: matricHash,
-          matric_no_enc: matricNo,
-          full_name_enc: personal?.full_name || '',
-          date_of_birth_enc: personal?.date_of_birth || null,
-          phone_number_enc: personal?.phone_number || null,
-          home_address_enc: personal?.home_address || null,
-          email_enc: personal?.email || user.email,
-          emergency_contact_enc: JSON.stringify({ name: ecName, relationship: ecRelation, phone: ecPhone }),
-          blood_group: clinical?.blood_group || 'unknown',
-          genotype: clinical?.genotype || 'unknown',
-          gender: personal?.gender || null,
-          ndpr_consent: true,
-          ndpr_consent_at: new Date().toISOString(),
-          ai_extraction_raw: extractionResult?.rawJson ? JSON.parse(extractionResult.rawJson) : null,
-          profile_verified: true,
-          profile_open: false  // auto-lock after first submission
-        })
-        .select('id')
-        .single()
+      const profilePayload = {
+        full_name_enc: personal?.full_name || '',
+        date_of_birth_enc: personal?.date_of_birth || null,
+        phone_number_enc: personal?.phone_number || null,
+        home_address_enc: personal?.home_address || null,
+        email_enc: personal?.email || user.email,
+        emergency_contact_enc: JSON.stringify({ name: ecName, relationship: ecRelation, phone: ecPhone }),
+        blood_group: clinical?.blood_group || 'unknown',
+        genotype: clinical?.genotype || 'unknown',
+        gender: personal?.gender || null,
+        ndpr_consent: true,
+        ndpr_consent_at: new Date().toISOString(),
+        ai_extraction_raw: extractionResult?.rawJson ? JSON.parse(extractionResult.rawJson) : null,
+        profile_verified: true,
+        profile_open: false  // auto-lock after submission
+      }
 
-      if (studentErr) throw studentErr
+      let studentId
 
-      const studentId = studentData.id
+      // Use supabaseAdmin (service role) to bypass RLS for all writes.
+      // The students_own_update RLS policy blocks setting profile_open=false
+      // because its implicit WITH CHECK requires profile_open=true on the new row.
+
+      if (existingStudentId) {
+        // ── UPDATE existing student row (reset account or admin-opened edit) ──
+        const { error: updateErr } = await supabaseAdmin
+          .from('students')
+          .update(profilePayload)
+          .eq('id', existingStudentId)
+
+        if (updateErr) throw updateErr
+        studentId = existingStudentId
+
+        // Clear old allergies and medical history so fresh extraction replaces them
+        // (visits and documents are preserved — not touched)
+        await supabaseAdmin.from('allergies').delete().eq('student_id', studentId)
+        await supabaseAdmin.from('medical_history').delete().eq('student_id', studentId)
+      } else {
+        // ── INSERT new student row (first-time onboarding) ──
+        const { data: studentData, error: studentErr } = await supabaseAdmin
+          .from('students')
+          .insert({
+            auth_user_id: user.id,
+            matric_no_hash: matricHash,
+            matric_no_enc: matricNo,
+            ...profilePayload
+          })
+          .select('id')
+          .single()
+
+        if (studentErr) throw studentErr
+        studentId = studentData.id
+      }
 
       // Insert allergies
       if (clinical?.allergies?.length > 0) {
@@ -360,7 +400,7 @@ export default function StudentOnboarding() {
           severity: a.severity || 'moderate',
           reaction_enc: a.reaction || null
         }))
-        await supabase.from('allergies').insert(allergyRows)
+        await supabaseAdmin.from('allergies').insert(allergyRows)
       }
 
       // Insert medical history
@@ -372,12 +412,12 @@ export default function StudentOnboarding() {
           status: h.status || 'active',
           notes_enc: h.notes || null
         }))
-        await supabase.from('medical_history').insert(historyRows)
+        await supabaseAdmin.from('medical_history').insert(historyRows)
       }
 
       // Insert document record
       if (docPath) {
-        await supabase.from('documents').insert({
+        await supabaseAdmin.from('documents').insert({
           student_id: studentId,
           document_type: extracted.document_meta?.document_type || 'other',
           storage_path_enc: docPath,
@@ -391,10 +431,10 @@ export default function StudentOnboarding() {
       }
 
       // Audit log
-      await supabase.from('audit_log').insert({
+      await supabaseAdmin.from('audit_log').insert({
         actor_id: user.id,
         actor_role: 'student',
-        action: 'ONBOARD_COMPLETE',
+        action: existingStudentId ? (isEditMode ? 'PROFILE_UPDATED' : 'ONBOARD_AFTER_RESET') : 'ONBOARD_COMPLETE',
         resource_type: 'students',
         resource_id: studentId,
         metadata: { matric_no_hash: matricHash }

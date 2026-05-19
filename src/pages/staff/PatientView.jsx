@@ -71,25 +71,29 @@ export default function PatientView() {
   }
 
   const toggleProfileOpen = async (open) => {
-    const { error: toggleErr } = await supabase
+    // Use supabaseAdmin to bypass RLS — this is an admin action
+    const { error: toggleErr } = await supabaseAdmin
       .from('students')
       .update({ profile_open: open, updated_at: new Date().toISOString() })
       .eq('id', id)
 
-    if (!toggleErr) {
-      setPatient(prev => ({ ...prev, profile_open: open }))
-
-      // Audit log
-      const user = (await supabase.auth.getUser()).data.user
-      await supabase.from('audit_log').insert({
-        actor_id: user?.id,
-        actor_role: 'staff',
-        action: open ? 'PROFILE_OPENED' : 'PROFILE_CLOSED',
-        resource_type: 'students',
-        resource_id: id,
-        metadata: { profile_open: open }
-      })
+    if (toggleErr) {
+      alert(`Failed to ${open ? 'open' : 'lock'} profile: ${toggleErr.message}`)
+      return
     }
+
+    setPatient(prev => ({ ...prev, profile_open: open }))
+
+    // Audit log
+    const user = (await supabase.auth.getUser()).data.user
+    await supabase.from('audit_log').insert({
+      actor_id: user?.id,
+      actor_role: 'staff',
+      action: open ? 'PROFILE_OPENED' : 'PROFILE_CLOSED',
+      resource_type: 'students',
+      resource_id: id,
+      metadata: { profile_open: open }
+    })
   }
 
   // ── Account Reset ────────────────────────────────────────
@@ -98,11 +102,17 @@ export default function PatientView() {
     setResetError(null)
 
     try {
+      // Use supabaseAdmin (service role) for all destructive ops — bypasses RLS entirely.
+      // The regular `supabase` client relies on RLS policies which may silently block deletes
+      // if the staff auth session or current_staff_role() check fails.
+
       // 1. Delete all allergies
-      await supabase.from('allergies').delete().eq('student_id', id)
+      const { error: allergyErr } = await supabaseAdmin.from('allergies').delete().eq('student_id', id)
+      if (allergyErr) throw new Error(`Failed to delete allergies: ${allergyErr.message}`)
 
       // 2. Delete all medical history
-      await supabase.from('medical_history').delete().eq('student_id', id)
+      const { error: historyErr } = await supabaseAdmin.from('medical_history').delete().eq('student_id', id)
+      if (historyErr) throw new Error(`Failed to delete medical history: ${historyErr.message}`)
 
       // 3. Delete uploaded files from R2 and document records
       const r2Paths = documents
@@ -111,16 +121,18 @@ export default function PatientView() {
       if (r2Paths.length > 0) {
         try { await deleteFromR2(r2Paths) } catch {}
       }
-      await supabase.from('documents').delete().eq('student_id', id)
+      const { error: docErr } = await supabaseAdmin.from('documents').delete().eq('student_id', id)
+      if (docErr) throw new Error(`Failed to delete documents: ${docErr.message}`)
 
       // 3b. Purge local file cache for this student
       await purgeStudentFiles(id)
 
       // 4. Delete all visits (cascades to vitals, diagnoses, prescriptions)
-      await supabase.from('visits').delete().eq('student_id', id)
+      const { error: visitErr } = await supabaseAdmin.from('visits').delete().eq('student_id', id)
+      if (visitErr) throw new Error(`Failed to delete visits: ${visitErr.message}`)
 
       // 5. Reset the student row — keep matric hash + matric_no_enc, wipe everything else
-      const { error: updateErr } = await supabase.from('students').update({
+      const { error: updateErr } = await supabaseAdmin.from('students').update({
         full_name_enc: '',
         date_of_birth_enc: null,
         phone_number_enc: null,
@@ -151,7 +163,7 @@ export default function PatientView() {
         })
       }
 
-      // 7. Audit log
+      // 7. Audit log (use regular client — audit insert policy allows any authenticated user)
       const user = (await supabase.auth.getUser()).data.user
       await supabase.from('audit_log').insert({
         actor_id: user?.id,

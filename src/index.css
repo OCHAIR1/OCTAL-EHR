@@ -1313,3 +1313,193 @@ body {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.4; }
 }
+
+/* ── PRINT BUTTON ─────────────────────────────────────── */
+
+.btn-print {
+  background: var(--surface);
+  color: var(--green);
+  border: 1.5px solid var(--border);
+  padding: 6px 14px;
+  border-radius: var(--radius);
+  font-size: 12px;
+  font-weight: 600;
+  font-family: 'Outfit', sans-serif;
+  cursor: pointer;
+  transition: all 0.15s;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.btn-print:hover {
+  background: var(--green-pale);
+  border-color: var(--green-light);
+}
+
+/* ── PRINT UTILITIES ──────────────────────────────────── */
+
+.print-only {
+  display: none !important;
+}
+
+/* ── PRINT STYLES ─────────────────────────────────────── */
+
+@media print {
+  /* Hide screen-only elements */
+  .no-print,
+  .no-print * {
+    display: none !important;
+  }
+
+  /* Show print-only elements */
+  .print-only {
+    display: block !important;
+  }
+
+  /* Reset layout */
+  html, body, #root {
+    height: auto !important;
+    background: white !important;
+  }
+
+  body {
+    font-family: 'Outfit', Arial, sans-serif !important;
+    color: #1a1a1a !important;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  .app-shell,
+  .app-shell--student {
+    max-width: 100% !important;
+    margin: 0 !important;
+    background: white !important;
+    min-height: auto !important;
+    box-shadow: none !important;
+  }
+
+  .content {
+    padding: 0 !important;
+  }
+
+  /* Print header */
+  .print-header {
+    text-align: center;
+    padding: 20px 0 10px;
+    border-bottom: 3px solid #1B4332;
+    margin-bottom: 20px;
+  }
+
+  .print-title {
+    font-family: 'DM Serif Display', Georgia, serif !important;
+    font-size: 28px !important;
+    color: #1B4332 !important;
+    margin: 0 0 4px !important;
+    letter-spacing: -0.5px;
+  }
+
+  .print-subtitle {
+    font-size: 13px;
+    color: #5A7362;
+    text-transform: uppercase;
+    letter-spacing: 2px;
+    font-weight: 600;
+    margin: 0 0 12px;
+  }
+
+  .print-patient-info {
+    display: flex;
+    justify-content: center;
+    flex-wrap: wrap;
+    gap: 16px;
+    font-size: 12px;
+    color: #333;
+  }
+
+  .print-patient-info strong {
+    color: #1B4332;
+  }
+
+  .print-divider {
+    height: 2px;
+    background: #1B4332;
+    margin: 12px 0;
+  }
+
+  /* Print footer */
+  .print-footer {
+    margin-top: 24px;
+    padding-top: 12px;
+    text-align: center;
+    font-size: 11px;
+    color: #999;
+  }
+
+  .print-partner {
+    font-size: 10px;
+    color: #aaa;
+    font-style: italic;
+    margin-top: 4px;
+  }
+
+  /* Cards in print */
+  .card {
+    border: 1px solid #ddd !important;
+    box-shadow: none !important;
+    break-inside: avoid;
+    page-break-inside: avoid;
+    margin-bottom: 12px !important;
+    padding: 16px !important;
+    background: white !important;
+  }
+
+  /* Visit details — always show in print */
+  .visit-details-collapsed {
+    display: block !important;
+  }
+
+  .visit-card {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
+  /* Section labels in print */
+  .section-label {
+    color: #1B4332 !important;
+    font-size: 11px !important;
+  }
+
+  .section-label::after {
+    background: #ddd !important;
+  }
+
+  /* Data rows */
+  .data-row {
+    border-bottom-color: #eee !important;
+  }
+
+  .data-key {
+    color: #666 !important;
+  }
+
+  .data-val {
+    color: #1a1a1a !important;
+  }
+
+  /* Allergy severity badges */
+  span[style*="border-radius: 100"] {
+    border: 1px solid currentColor !important;
+  }
+
+  /* Footer hide */
+  .footer {
+    display: none !important;
+  }
+
+  /* Page margins */
+  @page {
+    margin: 15mm 12mm;
+    size: A4;
+  }
+}

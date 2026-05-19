@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { supabase, getUser, signOut } from '../../lib/supabase'
 
@@ -24,6 +24,10 @@ export default function StudentDashboard() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
   const [expandedVisit, setExpandedVisit] = useState(null)
+  const [userEmail, setUserEmail] = useState('')
+  const [changePwSending, setChangePwSending] = useState(false)
+  const [changePwMsg, setChangePwMsg] = useState(null)
+  const printRef = useRef(null)
 
   useEffect(() => {
     loadDashboard()
@@ -34,6 +38,8 @@ export default function StudentDashboard() {
     try {
       const user = await getUser()
       if (!user) { navigate('/student/login'); return }
+
+      setUserEmail(user.email || '')
 
       // Fetch student profile
       const { data: studentData, error: sErr } = await supabase
@@ -93,10 +99,33 @@ export default function StudentDashboard() {
     navigate('/student/login')
   }
 
+  // ── Change Password (sends email link) ──
+  const handleChangePassword = async () => {
+    if (!userEmail) return
+    setChangePwSending(true)
+    setChangePwMsg(null)
+    try {
+      const { error: resetErr } = await supabase.auth.resetPasswordForEmail(userEmail, {
+        redirectTo: `${window.location.origin}/student/login`
+      })
+      if (resetErr) throw resetErr
+      setChangePwMsg({ type: 'success', text: 'Password reset link sent to your email. Check your inbox and spam folder.' })
+    } catch (err) {
+      setChangePwMsg({ type: 'error', text: err.message || 'Failed to send reset email.' })
+    } finally {
+      setChangePwSending(false)
+    }
+  }
+
+  // ── Print Visits ──
+  const handlePrintVisits = () => {
+    window.print()
+  }
+
   if (loading) {
     return (
       <div className="app-shell app-shell--student" style={{ maxWidth: 600 }}>
-        <div className="header">
+        <div className="header no-print">
           <div>
             <div className="header-brand">OCTAL-EHR</div>
             <div className="header-sub">My Health Record</div>
@@ -115,7 +144,7 @@ export default function StudentDashboard() {
   if (error || !student) {
     return (
       <div className="app-shell app-shell--student" style={{ maxWidth: 600 }}>
-        <div className="header">
+        <div className="header no-print">
           <div>
             <div className="header-brand">OCTAL-EHR</div>
             <div className="header-sub">My Health Record</div>
@@ -139,8 +168,8 @@ export default function StudentDashboard() {
   })()
 
   return (
-    <div className="app-shell app-shell--student" style={{ maxWidth: 600 }}>
-      <div className="header">
+    <div className="app-shell app-shell--student" style={{ maxWidth: 600 }} ref={printRef}>
+      <div className="header no-print">
         <div>
           <div className="header-brand">OCTAL-EHR</div>
           <div className="header-sub">My Health Record</div>
@@ -150,10 +179,30 @@ export default function StudentDashboard() {
         </div>
       </div>
 
+      {/* ── Print-Only Header ── */}
+      <div className="print-only print-header">
+        <h1 className="print-title">Caleb University Medicals</h1>
+        <p className="print-subtitle">Student Health Record</p>
+        <div className="print-patient-info">
+          <span><strong>Name:</strong> {student.full_name_enc}</span>
+          <span><strong>Matric:</strong> {student.matric_no_enc}</span>
+          {student.blood_group && student.blood_group !== 'unknown' && (
+            <span><strong>Blood:</strong> {student.blood_group}</span>
+          )}
+          {student.genotype && student.genotype !== 'unknown' && (
+            <span><strong>Genotype:</strong> {student.genotype}</span>
+          )}
+          {student.gender && (
+            <span><strong>Gender:</strong> {student.gender}</span>
+          )}
+        </div>
+        <div className="print-divider" />
+      </div>
+
       <div className="content" style={{ padding: '24px 20px' }}>
 
         {/* ── Student Identity Card ── */}
-        <div className="card" style={{ textAlign: 'center', paddingTop: 32, paddingBottom: 28 }}>
+        <div className="card no-print" style={{ textAlign: 'center', paddingTop: 32, paddingBottom: 28 }}>
           <div style={{
             width: 72, height: 72, borderRadius: '50%', background: 'var(--green)',
             display: 'flex', alignItems: 'center', justifyContent: 'center',
@@ -252,7 +301,7 @@ export default function StudentDashboard() {
         </div>
 
         {/* ── Personal Information ── */}
-        <div className="card">
+        <div className="card no-print">
           <div className="section-label" style={{ margin: '0 0 12px' }}>Personal Information</div>
           <DataRow label="Full Name" value={student.full_name_enc} />
           <DataRow label="Date of Birth" value={student.date_of_birth_enc} />
@@ -305,9 +354,20 @@ export default function StudentDashboard() {
         })()}
 
         {/* ── Visit History ── */}
-        <div className="card">
-          <div className="section-label" style={{ margin: '0 0 12px' }}>
-            Clinic Visits ({visits.length})
+        <div className="card" id="visits-section">
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+            <div className="section-label" style={{ margin: 0 }}>
+              Clinic Visits ({visits.length})
+            </div>
+            {visits.length > 0 && (
+              <button
+                className="btn-print no-print"
+                onClick={handlePrintVisits}
+                title="Print visit history"
+              >
+                🖨 Print
+              </button>
+            )}
           </div>
           {visits.length === 0 ? (
             <p style={{ fontSize: 13, color: 'var(--muted)', lineHeight: 1.6 }}>
@@ -322,6 +382,7 @@ export default function StudentDashboard() {
                 })
                 return (
                   <div key={v.id}
+                    className="visit-card"
                     style={{
                       border: '1px solid var(--border)', borderRadius: 'var(--radius)',
                       background: isOpen ? 'var(--surface)' : 'var(--white)',
@@ -343,23 +404,25 @@ export default function StudentDashboard() {
                           {date} · {v.status === 'open' ? '🟢 Open' : v.status === 'referred' ? '🔵 Referred' : '⚫ Closed'}
                         </div>
                       </div>
-                      <span style={{ fontSize: 12, color: 'var(--muted)', transform: isOpen ? 'rotate(180deg)' : 'none', transition: 'transform 0.2s' }}>
+                      <span className="no-print" style={{ fontSize: 12, color: 'var(--muted)', transform: isOpen ? 'rotate(180deg)' : 'none', transition: 'transform 0.2s' }}>
                         ▼
                       </span>
                     </div>
 
-                    {isOpen && (
-                      <div style={{ padding: '0 16px 16px', borderTop: '1px solid var(--border)' }}>
-                        {v.notes_enc && (
-                          <div style={{ marginTop: 12 }}>
-                            <div style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 1, color: 'var(--muted)', marginBottom: 4 }}>
-                              Notes
-                            </div>
-                            <p style={{ fontSize: 13, color: 'var(--text)', lineHeight: 1.6 }}>{v.notes_enc}</p>
+                    {/* Always show details in print, toggle on screen */}
+                    <div className={isOpen ? '' : 'visit-details-collapsed'} style={{ padding: '0 16px 16px', borderTop: '1px solid var(--border)' }}>
+                      {v.notes_enc && (
+                        <div style={{ marginTop: 12 }}>
+                          <div style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 1, color: 'var(--muted)', marginBottom: 4 }}>
+                            Notes
                           </div>
-                        )}
-                      </div>
-                    )}
+                          <p style={{ fontSize: 13, color: 'var(--text)', lineHeight: 1.6 }}>{v.notes_enc}</p>
+                        </div>
+                      )}
+                      {!v.notes_enc && (
+                        <p style={{ marginTop: 12, fontSize: 12, color: 'var(--muted)', fontStyle: 'italic' }}>No notes recorded.</p>
+                      )}
+                    </div>
                   </div>
                 )
               })}
@@ -369,7 +432,7 @@ export default function StudentDashboard() {
 
         {/* ── Documents ── */}
         {documents.length > 0 && (
-          <div className="card">
+          <div className="card no-print">
             <div className="section-label" style={{ margin: '0 0 12px' }}>Uploaded Documents</div>
             {documents.map((doc, i) => (
               <div key={i} style={{
@@ -389,18 +452,82 @@ export default function StudentDashboard() {
           </div>
         )}
 
-        {/* ── Edit Notice ── */}
-        <div style={{
-          background: 'var(--surface)', border: '1px solid var(--border)',
-          borderRadius: 'var(--radius)', padding: 16, marginTop: 8, marginBottom: 24
-        }}>
-          <p style={{ fontSize: 12, color: 'var(--muted)', lineHeight: 1.6, margin: 0 }}>
-            📝 Need to update your information? Visit the Health Center and ask staff to open your profile for editing.
-          </p>
+        {/* ── Update Profile (when admin opened) ── */}
+        {student.profile_open && (
+          <div className="card no-print" style={{
+            border: '1.5px solid var(--warn)', background: 'var(--warn-bg)'
+          }}>
+            <div className="section-label" style={{ margin: '0 0 8px', color: 'var(--warn)' }}>
+              🔓 Profile Open for Update
+            </div>
+            <p style={{ fontSize: 12, color: 'var(--muted)', lineHeight: 1.6, marginBottom: 12 }}>
+              The health center staff has opened your profile for updates. You can re-upload a medical document to refresh your personal and clinical details. Your visit history will be preserved.
+            </p>
+            <button
+              className="btn-primary"
+              style={{ width: '100%' }}
+              onClick={() => navigate('/student/onboarding')}
+            >
+              📄 Update Profile via Document Upload
+            </button>
+          </div>
+        )}
+
+        {/* ── Account Actions ── */}
+        <div className="card no-print">
+          <div className="section-label" style={{ margin: '0 0 12px' }}>Account</div>
+
+          {/* Change Password */}
+          <div style={{
+            padding: '14px 16px', background: 'var(--surface)', borderRadius: 'var(--radius)',
+            border: '1px solid var(--border)', marginBottom: 8
+          }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div>
+                <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text)' }}>Change Password</div>
+                <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 2 }}>
+                  We'll send a reset link to {userEmail || 'your email'}
+                </div>
+              </div>
+              <button
+                className="btn-secondary"
+                style={{ padding: '6px 16px', fontSize: 12, whiteSpace: 'nowrap' }}
+                onClick={handleChangePassword}
+                disabled={changePwSending}
+              >
+                {changePwSending ? 'Sending…' : '🔒 Change'}
+              </button>
+            </div>
+            {changePwMsg && (
+              <div style={{
+                marginTop: 8, padding: '8px 12px', borderRadius: 'var(--radius)', fontSize: 12,
+                background: changePwMsg.type === 'success' ? 'var(--green-pale)' : 'var(--alert-bg)',
+                color: changePwMsg.type === 'success' ? 'var(--green)' : 'var(--alert)',
+                border: `1px solid ${changePwMsg.type === 'success' ? 'var(--green-light)' : 'var(--alert)'}`,
+                lineHeight: 1.5
+              }}>
+                {changePwMsg.type === 'success' ? '✓ ' : '⚠ '}{changePwMsg.text}
+              </div>
+            )}
+          </div>
+
+          {/* Edit notice (only show when profile is locked) */}
+          {!student.profile_open && (
+            <p style={{ fontSize: 12, color: 'var(--muted)', lineHeight: 1.6, margin: '8px 0 0' }}>
+              📝 Need to update your information? Visit the Health Center and ask staff to open your profile for editing.
+            </p>
+          )}
         </div>
       </div>
 
-      <div className="footer">
+      {/* ── Print Footer ── */}
+      <div className="print-only print-footer">
+        <div className="print-divider" />
+        <p>Printed on {new Date().toLocaleDateString('en-NG', { year: 'numeric', month: 'long', day: 'numeric' })}</p>
+        <p className="print-partner">Powered by OCTAL · Technology Partner</p>
+      </div>
+
+      <div className="footer no-print">
         Encrypted · NDPR Compliant · OCTAL {new Date().getFullYear()}
       </div>
     </div>

@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { signIn, supabase } from '../../lib/supabase'
 import { hashMatricNo } from '../../lib/crypto'
@@ -16,6 +16,52 @@ export default function StudentLogin() {
   const [forgotLoading, setForgotLoading] = useState(false)
   const [forgotSent, setForgotSent] = useState(false)
   const [forgotError, setForgotError] = useState(null)
+
+  // Password recovery state (after clicking email link)
+  const [showRecovery, setShowRecovery] = useState(false)
+  const [newPassword, setNewPassword] = useState('')
+  const [confirmPassword, setConfirmPassword] = useState('')
+  const [recoveryLoading, setRecoveryLoading] = useState(false)
+  const [recoveryError, setRecoveryError] = useState(null)
+  const [recoveryDone, setRecoveryDone] = useState(false)
+
+  // Listen for PASSWORD_RECOVERY event from Supabase redirect
+  useEffect(() => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event) => {
+      if (event === 'PASSWORD_RECOVERY') {
+        setShowRecovery(true)
+        setShowForgot(false)
+      }
+    })
+    return () => subscription.unsubscribe()
+  }, [])
+
+  const handleSetNewPassword = async (e) => {
+    e.preventDefault()
+    setRecoveryError(null)
+
+    if (newPassword.length < 6) {
+      setRecoveryError('Password must be at least 6 characters.')
+      return
+    }
+    if (newPassword !== confirmPassword) {
+      setRecoveryError('Passwords do not match.')
+      return
+    }
+
+    setRecoveryLoading(true)
+    try {
+      const { error: updateErr } = await supabase.auth.updateUser({ password: newPassword })
+      if (updateErr) throw updateErr
+      setRecoveryDone(true)
+      // Sign out so they log in fresh with new password
+      await supabase.auth.signOut()
+    } catch (err) {
+      setRecoveryError(err.message || 'Failed to update password.')
+    } finally {
+      setRecoveryLoading(false)
+    }
+  }
 
   /**
    * Resolve the login email from identifier.
@@ -93,6 +139,75 @@ export default function StudentLogin() {
     } finally {
       setForgotLoading(false)
     }
+  }
+
+  // ── Password Recovery View (after email link click) ──
+  if (showRecovery) {
+    return (
+      <div className="login-page">
+        <div className="login-card">
+          <h1 className="login-brand">OCTAL-EHR</h1>
+          <p className="login-sub">Set New Password</p>
+
+          {recoveryDone ? (
+            <div style={{ textAlign: 'center', padding: '20px 0' }}>
+              <div style={{ fontSize: 48, marginBottom: 16 }}>✓</div>
+              <p style={{ fontSize: 14, color: 'var(--text)', fontWeight: 600, marginBottom: 8 }}>
+                Password updated!
+              </p>
+              <p style={{ fontSize: 13, color: 'var(--muted)', lineHeight: 1.6, marginBottom: 24 }}>
+                Your password has been changed successfully. Please sign in with your new password.
+              </p>
+              <button className="btn-primary" style={{ width: '100%' }} onClick={() => {
+                setShowRecovery(false)
+                setRecoveryDone(false)
+                setNewPassword('')
+                setConfirmPassword('')
+              }}>
+                Sign In →
+              </button>
+            </div>
+          ) : (
+            <form onSubmit={handleSetNewPassword}>
+              <p style={{ fontSize: 13, color: 'var(--muted)', lineHeight: 1.6, marginBottom: 20 }}>
+                Enter your new password below.
+              </p>
+
+              <div className="field">
+                <label>New Password</label>
+                <input
+                  type="password"
+                  placeholder="At least 6 characters"
+                  value={newPassword}
+                  onChange={e => setNewPassword(e.target.value)}
+                  required
+                  minLength={6}
+                />
+              </div>
+
+              <div className="field">
+                <label>Confirm Password</label>
+                <input
+                  type="password"
+                  placeholder="Re-enter new password"
+                  value={confirmPassword}
+                  onChange={e => setConfirmPassword(e.target.value)}
+                  required
+                />
+              </div>
+
+              {recoveryError && <div className="error-box">⚠ {recoveryError}</div>}
+
+              <div className="btn-row" style={{ marginTop: 20, paddingBottom: 0 }}>
+                <button className="btn-primary" type="submit" disabled={recoveryLoading || !newPassword || !confirmPassword}>
+                  {recoveryLoading ? 'Updating…' : 'Set New Password'}
+                </button>
+              </div>
+            </form>
+          )}
+        </div>
+      </div>
+    )
   }
 
   // ── Forgot Password View ──
