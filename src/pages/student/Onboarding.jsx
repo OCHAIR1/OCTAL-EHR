@@ -49,6 +49,11 @@ export default function StudentOnboarding() {
   const [extractionResult, setExtractionResult] = useState(null)
   const [error, setError] = useState(null)
 
+  // Emergency contact (editable)
+  const [ecName, setEcName] = useState('')
+  const [ecRelation, setEcRelation] = useState('')
+  const [ecPhone, setEcPhone] = useState('')
+
   // Consent
   const [consent, setConsent] = useState(false)
   const [submitting, setSubmitting] = useState(false)
@@ -91,6 +96,15 @@ export default function StudentOnboarding() {
       const result = await extractMedicalData(file)
       setExtracted(result.extracted)
       setExtractionResult(result)
+
+      // Pre-fill emergency contact from extraction
+      const ec = result.extracted?.personal?.emergency_contact
+      if (ec) {
+        setEcName(ec.name || '')
+        setEcRelation(ec.relationship || '')
+        setEcPhone(ec.phone || '')
+      }
+
       setProcessing(false)
       setStep(1)
     } catch (err) {
@@ -223,10 +237,42 @@ export default function StudentOnboarding() {
           </>
         )}
 
-        <div className="section-label">Emergency Contact</div>
-        <DataRow label="Name" value={personal?.emergency_contact?.name} />
-        <DataRow label="Relation" value={personal?.emergency_contact?.relationship} />
-        <DataRow label="Phone" value={personal?.emergency_contact?.phone} />
+        <div className="section-label">Emergency Contact *</div>
+        <p style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 12 }}>
+          Required — please confirm or enter your emergency contact details.
+        </p>
+        <div className="field">
+          <label>Contact Name *</label>
+          <input
+            type="text"
+            placeholder="e.g. Mrs. Adewale"
+            value={ecName}
+            onChange={e => setEcName(e.target.value)}
+            style={{ border: !ecName.trim() ? '2px solid var(--alert)' : undefined }}
+          />
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0 12px' }}>
+          <div className="field">
+            <label>Relationship *</label>
+            <input
+              type="text"
+              placeholder="e.g. Mother, Father, Guardian"
+              value={ecRelation}
+              onChange={e => setEcRelation(e.target.value)}
+              style={{ border: !ecRelation.trim() ? '2px solid var(--alert)' : undefined }}
+            />
+          </div>
+          <div className="field">
+            <label>Phone Number *</label>
+            <input
+              type="tel"
+              placeholder="e.g. 08012345678"
+              value={ecPhone}
+              onChange={e => setEcPhone(e.target.value)}
+              style={{ border: !ecPhone.trim() ? '2px solid var(--alert)' : undefined }}
+            />
+          </div>
+        </div>
 
         {extracted.document_meta && (extracted.document_meta.issuing_facility || extracted.document_meta.issuing_doctor) && (
           <>
@@ -237,8 +283,20 @@ export default function StudentOnboarding() {
           </>
         )}
 
+        {(!ecName.trim() || !ecRelation.trim() || !ecPhone.trim()) && (
+          <div className="warning-box" style={{ marginTop: 12 }}>
+            ⚠ Please fill in all emergency contact fields before continuing.
+          </div>
+        )}
+
         <div className="btn-row">
-          <button className="btn-primary" onClick={() => setStep(2)}>This looks correct →</button>
+          <button
+            className="btn-primary"
+            disabled={!ecName.trim() || !ecRelation.trim() || !ecPhone.trim()}
+            onClick={() => setStep(2)}
+          >
+            This looks correct →
+          </button>
           <button className="btn-secondary" onClick={() => setStep(0)}>← Re-upload document</button>
         </div>
       </>
@@ -277,7 +335,7 @@ export default function StudentOnboarding() {
           phone_number_enc: personal?.phone_number || null,
           home_address_enc: personal?.home_address || null,
           email_enc: personal?.email || user.email,
-          emergency_contact_enc: JSON.stringify(personal?.emergency_contact || {}),
+          emergency_contact_enc: JSON.stringify({ name: ecName, relationship: ecRelation, phone: ecPhone }),
           blood_group: clinical?.blood_group || 'unknown',
           genotype: clinical?.genotype || 'unknown',
           gender: personal?.gender || null,
