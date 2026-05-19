@@ -1,9 +1,7 @@
-import { GoogleGenerativeAI } from '@google/generative-ai'
-
-const genAI = new GoogleGenerativeAI(import.meta.env.VITE_GEMINI_API_KEY)
+import { callWithRotation } from './gemini-keys'
 
 const EXTRACTION_PROMPT = `
-You are a medical records extraction AI for Caleb University Health Center (Nigeria).
+You are a medical records extraction system for Caleb University Health Center (Nigeria).
 Extract structured medical information from the uploaded document.
 
 DOCUMENT TYPES you may encounter:
@@ -97,21 +95,24 @@ export async function extractMedicalData(file) {
 
   const base64 = await fileToBase64(file)
 
-  const model = genAI.getGenerativeModel({
-    model: 'gemini-2.5-flash',
-    generationConfig: {
-      temperature: 0.1,
-      topP: 0.95,
-      maxOutputTokens: 4096,
-      responseMimeType: 'application/json'
-    },
-    systemInstruction: EXTRACTION_PROMPT
-  })
+  // Use key rotation — automatically retries with next key on rate limit
+  const result = await callWithRotation(async (genAI) => {
+    const model = genAI.getGenerativeModel({
+      model: 'gemini-2.5-flash',
+      generationConfig: {
+        temperature: 0.1,
+        topP: 0.95,
+        maxOutputTokens: 4096,
+        responseMimeType: 'application/json'
+      },
+      systemInstruction: EXTRACTION_PROMPT
+    })
 
-  const result = await model.generateContent([
-    { inlineData: { mimeType: mime, data: base64 } },
-    { text: 'Extract all medical information from this document.' }
-  ])
+    return model.generateContent([
+      { inlineData: { mimeType: mime, data: base64 } },
+      { text: 'Extract all medical information from this document.' }
+    ])
+  })
 
   let raw = result.response.text()
   let parsed
@@ -123,7 +124,7 @@ export async function extractMedicalData(file) {
     try {
       parsed = JSON.parse(cleaned)
     } catch {
-      throw new Error('AI returned unreadable data. The document may be too damaged to scan.')
+      throw new Error('Extraction returned unreadable data. The document may be too damaged to scan.')
     }
   }
 

@@ -2,13 +2,12 @@ import { useState, useRef, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { supabase, supabaseAdmin } from '../../lib/supabase'
 import { hashMatricNo } from '../../lib/crypto'
-import { GoogleGenerativeAI } from '@google/generative-ai'
+import { callWithRotation } from '../../lib/gemini-keys'
 
 // ── Constants ────────────────────────────────────────────────
 const DEFAULT_PASSWORD = 'Calebuniv'
 
-// ── Gemini matric scraper ────────────────────────────────────
-const genAI = new GoogleGenerativeAI(import.meta.env.VITE_GEMINI_API_KEY)
+// ── Matric + email scraper (key rotation) ────────────────────
 
 async function fileToBase64(file) {
   return new Promise((resolve, reject) => {
@@ -26,20 +25,15 @@ function getMime(file) {
   return map[ext] || 'text/plain'
 }
 
-async function scrapeMatricNumbers(file) {
-  const mime = getMime(file)
-  const isBinary = mime.includes('pdf') || mime.includes('image')
-
-  const model = genAI.getGenerativeModel({
-    model: 'gemini-2.5-flash',
-    generationConfig: { temperature: 0, responseMimeType: 'application/json' }
-  })
-
-  const SCRAPE_PROMPT = `Extract ALL student matric numbers AND their associated email addresses from this document.
+const SCRAPE_PROMPT = `Extract ALL student matric numbers AND their associated email addresses from this document.
 Nigerian universities use matric formats like 24/15554, CSC/2021/001, ENG/2020/042, 19/0101, etc.
 Emails can be any format — school emails (e.g. student@calebuniversity.edu.ng) OR personal emails (e.g. student@gmail.com).
 If you find a matric number but no email next to it, still include it with email as null.
 Return ONLY valid JSON: {"students": [{"matric": "...", "email": "...or null"}, ...]}. No explanation.`
+
+async function scrapeMatricNumbers(file) {
+  const mime = getMime(file)
+  const isBinary = mime.includes('pdf') || mime.includes('image')
 
   let parts = []
 
@@ -56,7 +50,15 @@ Return ONLY valid JSON: {"students": [{"matric": "...", "email": "...or null"}, 
     ]
   }
 
-  const result = await model.generateContent(parts)
+  // Use key rotation — automatically retries with next key on rate limit
+  const result = await callWithRotation(async (genAI) => {
+    const model = genAI.getGenerativeModel({
+      model: 'gemini-2.5-flash',
+      generationConfig: { temperature: 0, responseMimeType: 'application/json' }
+    })
+    return model.generateContent(parts)
+  })
+
   let raw = result.response.text()
 
   let parsed
@@ -67,7 +69,7 @@ Return ONLY valid JSON: {"students": [{"matric": "...", "email": "...or null"}, 
     parsed = JSON.parse(cleaned)
   }
 
-  // Support both old format {matric_numbers: []} and new {students: [{matric, email}]}
+  // Support both formats
   if (parsed.students) {
     return parsed.students
       .filter(s => s.matric)
