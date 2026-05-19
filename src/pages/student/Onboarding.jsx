@@ -32,6 +32,74 @@ function DataRow({ label, value }) {
   )
 }
 
+// Merge multiple Gemini extraction results into one combined view
+function mergeExtractions(extractions) {
+  const merged = {
+    personal: {},
+    clinical: { allergies: [], medical_history: [], vaccinations: [], current_medications: [] },
+    document_meta: {},
+    extraction_meta: { confidence: 0, low_confidence_fields: [], notes: null }
+  }
+
+  const seenAllergens = new Set()
+  const seenConditions = new Set()
+  const seenDrugs = new Set()
+  const seenVaccines = new Set()
+  let totalConfidence = 0
+
+  for (const ex of extractions) {
+    if (!ex) continue
+
+    // Personal: take first non-null value for each field
+    if (ex.personal) {
+      for (const key of ['full_name', 'date_of_birth', 'gender', 'phone_number', 'home_address', 'email']) {
+        if (!merged.personal[key] && ex.personal[key]) merged.personal[key] = ex.personal[key]
+      }
+      if (!merged.personal.emergency_contact && ex.personal.emergency_contact?.name) {
+        merged.personal.emergency_contact = ex.personal.emergency_contact
+      }
+    }
+
+    // Clinical scalars: first non-null
+    if (ex.clinical) {
+      if (!merged.clinical.blood_group && ex.clinical.blood_group) merged.clinical.blood_group = ex.clinical.blood_group
+      if (!merged.clinical.genotype && ex.clinical.genotype) merged.clinical.genotype = ex.clinical.genotype
+
+      // Arrays: deduplicate and concatenate
+      for (const a of (ex.clinical.allergies || [])) {
+        const key = (a.allergen || '').toLowerCase()
+        if (key && !seenAllergens.has(key)) { seenAllergens.add(key); merged.clinical.allergies.push(a) }
+      }
+      for (const h of (ex.clinical.medical_history || [])) {
+        const key = (h.condition || '').toLowerCase()
+        if (key && !seenConditions.has(key)) { seenConditions.add(key); merged.clinical.medical_history.push(h) }
+      }
+      for (const m of (ex.clinical.current_medications || [])) {
+        const key = (m.drug || '').toLowerCase()
+        if (key && !seenDrugs.has(key)) { seenDrugs.add(key); merged.clinical.current_medications.push(m) }
+      }
+      for (const v of (ex.clinical.vaccinations || [])) {
+        const key = (v.vaccine || '').toLowerCase()
+        if (key && !seenVaccines.has(key)) { seenVaccines.add(key); merged.clinical.vaccinations.push(v) }
+      }
+    }
+
+    // Document meta: take first
+    if (ex.document_meta && !merged.document_meta.document_type) {
+      merged.document_meta = ex.document_meta
+    }
+
+    // Confidence: average
+    if (ex.extraction_meta?.confidence) totalConfidence += ex.extraction_meta.confidence
+    if (ex.extraction_meta?.low_confidence_fields) {
+      merged.extraction_meta.low_confidence_fields.push(...ex.extraction_meta.low_confidence_fields)
+    }
+  }
+
+  merged.extraction_meta.confidence = extractions.length > 0 ? totalConfidence / extractions.length : 0
+  return merged
+}
+
 export default function StudentOnboarding() {
   const navigate = useNavigate()
   const [step, setStep] = useState(0)

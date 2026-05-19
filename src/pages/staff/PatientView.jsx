@@ -24,6 +24,7 @@ export default function PatientView() {
   const [resetConfirmMatric, setResetConfirmMatric] = useState('')
   const [resetting, setResetting] = useState(false)
   const [resetError, setResetError] = useState(null)
+  const [expandedDoc, setExpandedDoc] = useState(null)
 
   useEffect(() => {
     loadPatient()
@@ -379,23 +380,200 @@ export default function PatientView() {
 
         <VisitHistory studentId={id} refreshKey={visitRefreshKey} />
 
-        {/* Documents */}
+        {/* Documents — Artifact View */}
         <div className="card">
-          <div className="section-label" style={{ margin: '0 0 12px' }}>Uploaded Documents</div>
+          <div className="section-label" style={{ margin: '0 0 12px' }}>Uploaded Documents ({documents.length})</div>
           {documents.length === 0 ? (
             <p style={{ fontSize: 13, color: 'var(--muted)' }}>No documents uploaded</p>
           ) : (
-            documents.map((doc, i) => (
-              <div key={i} className="doc-item">
-                <div>
-                  <div className="doc-item-name">{doc.original_filename || 'Document'}</div>
-                  <div className="doc-item-meta">
-                    {doc.document_type} · {doc.file_size_bytes ? `${Math.round(doc.file_size_bytes / 1024)}KB` : ''}
+            documents.map((doc, i) => {
+              const isExpanded = expandedDoc === doc.id
+              const aiData = (() => {
+                try {
+                  if (!doc.ai_raw_json) return null
+                  const raw = typeof doc.ai_raw_json === 'string' ? JSON.parse(doc.ai_raw_json) : doc.ai_raw_json
+                  return typeof raw === 'string' ? JSON.parse(raw) : raw
+                } catch { return null }
+              })()
+
+              return (
+                <div key={doc.id || i} style={{
+                  border: `1.5px solid ${isExpanded ? 'var(--green-light)' : 'var(--border)'}`,
+                  borderRadius: 'var(--radius-lg)', marginBottom: 10, overflow: 'hidden',
+                  transition: 'border-color 0.2s'
+                }}>
+                  {/* Header */}
+                  <div
+                    onClick={() => setExpandedDoc(isExpanded ? null : doc.id)}
+                    style={{
+                      display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                      padding: '12px 16px', cursor: 'pointer',
+                      background: isExpanded ? 'var(--green-pale)' : 'transparent',
+                      transition: 'background 0.2s'
+                    }}
+                  >
+                    <div>
+                      <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--text)' }}>
+                        {doc.original_filename || 'Document'}
+                      </div>
+                      <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 2 }}>
+                        {doc.document_type} · {doc.file_size_bytes ? `${Math.round(doc.file_size_bytes / 1024)}KB` : ''}
+                        {doc.ai_confidence ? ` · ${Math.round(doc.ai_confidence * 100)}% confidence` : ''}
+                      </div>
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <span onClick={(e) => { e.stopPropagation(); downloadDoc(doc) }} style={{
+                        fontSize: 11, fontWeight: 700, color: 'var(--green)', cursor: 'pointer',
+                        padding: '4px 10px', background: 'var(--green-pale)', borderRadius: 'var(--radius)'
+                      }}>Download ↓</span>
+                      <span style={{ fontSize: 12, color: 'var(--muted)', transition: 'transform 0.2s',
+                        transform: isExpanded ? 'rotate(180deg)' : 'none' }}>▼</span>
+                    </div>
                   </div>
+
+                  {/* Expanded Artifact */}
+                  {isExpanded && (
+                    <div id={`artifact-${doc.id}`} style={{ padding: '0 16px 16px', borderTop: '1px solid var(--border)' }}>
+                      {!aiData ? (
+                        <p style={{ fontSize: 13, color: 'var(--muted)', padding: '12px 0' }}>No AI extraction data available for this document.</p>
+                      ) : (
+                        <>
+                          {/* Personal */}
+                          {aiData.personal && (
+                            <div style={{ marginTop: 12 }}>
+                              <div className="section-label" style={{ marginBottom: 6 }}>Personal Details</div>
+                              <ArtifactRow label="Full Name" value={aiData.personal.full_name} />
+                              <ArtifactRow label="Date of Birth" value={aiData.personal.date_of_birth} />
+                              <ArtifactRow label="Gender" value={aiData.personal.gender} />
+                              <ArtifactRow label="Phone" value={aiData.personal.phone_number} />
+                              <ArtifactRow label="Email" value={aiData.personal.email} />
+                              <ArtifactRow label="Address" value={aiData.personal.home_address} />
+                              {aiData.personal.emergency_contact && (
+                                <>
+                                  <ArtifactRow label="Emergency Contact" value={aiData.personal.emergency_contact.name} />
+                                  <ArtifactRow label="EC Relationship" value={aiData.personal.emergency_contact.relationship} />
+                                  <ArtifactRow label="EC Phone" value={aiData.personal.emergency_contact.phone} />
+                                </>
+                              )}
+                            </div>
+                          )}
+
+                          {/* Clinical */}
+                          <div style={{ marginTop: 16 }}>
+                            <div className="section-label" style={{ marginBottom: 6 }}>Clinical Data</div>
+                            <ArtifactRow label="Blood Group" value={aiData.clinical?.blood_group} />
+                            <ArtifactRow label="Genotype" value={aiData.clinical?.genotype} />
+                          </div>
+
+                          {/* Allergies */}
+                          {aiData.clinical?.allergies?.length > 0 && (
+                            <div style={{ marginTop: 12 }}>
+                              <div className="section-label" style={{ marginBottom: 6 }}>⚠ Allergies</div>
+                              {aiData.clinical.allergies.map((a, j) => (
+                                <ArtifactRow key={j} label={a.allergen} value={`${a.severity || 'unknown'}${a.reaction ? ' — ' + a.reaction : ''}`} />
+                              ))}
+                            </div>
+                          )}
+
+                          {/* Medical History */}
+                          {aiData.clinical?.medical_history?.length > 0 && (
+                            <div style={{ marginTop: 12 }}>
+                              <div className="section-label" style={{ marginBottom: 6 }}>Medical History</div>
+                              {aiData.clinical.medical_history.map((h, j) => (
+                                <ArtifactRow key={j} label={h.condition} value={`${h.status || ''}${h.notes ? ' — ' + h.notes : ''}`} />
+                              ))}
+                            </div>
+                          )}
+
+                          {/* Current Medications */}
+                          {aiData.clinical?.current_medications?.length > 0 && (
+                            <div style={{ marginTop: 12 }}>
+                              <div className="section-label" style={{ marginBottom: 6 }}>💊 Current Medications</div>
+                              {aiData.clinical.current_medications.map((m, j) => (
+                                <ArtifactRow key={j} label={m.drug} value={[m.dosage, m.frequency].filter(Boolean).join(' · ') || '—'} />
+                              ))}
+                            </div>
+                          )}
+
+                          {/* Vaccinations */}
+                          {aiData.clinical?.vaccinations?.length > 0 && (
+                            <div style={{ marginTop: 12 }}>
+                              <div className="section-label" style={{ marginBottom: 6 }}>💉 Vaccinations</div>
+                              {aiData.clinical.vaccinations.map((v, j) => (
+                                <ArtifactRow key={j} label={v.vaccine} value={v.date || 'Date not specified'} />
+                              ))}
+                            </div>
+                          )}
+
+                          {/* Document Meta */}
+                          {aiData.document_meta && (
+                            <div style={{ marginTop: 12 }}>
+                              <div className="section-label" style={{ marginBottom: 6 }}>Document Info</div>
+                              <ArtifactRow label="Type" value={aiData.document_meta.document_type} />
+                              <ArtifactRow label="Facility" value={aiData.document_meta.issuing_facility} />
+                              <ArtifactRow label="Doctor" value={aiData.document_meta.issuing_doctor} />
+                              <ArtifactRow label="Date" value={aiData.document_meta.document_date} />
+                            </div>
+                          )}
+
+                          {/* Confidence */}
+                          {aiData.extraction_meta && (
+                            <div style={{ marginTop: 12, padding: '10px 14px', background: 'var(--surface)', borderRadius: 'var(--radius)', fontSize: 12 }}>
+                              <strong>Extraction Confidence:</strong> {Math.round((aiData.extraction_meta.confidence || 0) * 100)}%
+                              {aiData.extraction_meta.low_confidence_fields?.length > 0 && (
+                                <span style={{ color: 'var(--warn)', marginLeft: 8 }}>
+                                  ⚠ Low confidence: {aiData.extraction_meta.low_confidence_fields.join(', ')}
+                                </span>
+                              )}
+                              {aiData.extraction_meta.notes && (
+                                <div style={{ marginTop: 4, color: 'var(--muted)' }}>{aiData.extraction_meta.notes}</div>
+                              )}
+                            </div>
+                          )}
+                        </>
+                      )}
+
+                      {/* Action buttons */}
+                      <div style={{ display: 'flex', gap: 8, marginTop: 16 }}>
+                        <button onClick={() => downloadDoc(doc)} style={{
+                          flex: 1, padding: '10px 16px', background: 'var(--green)', color: 'white',
+                          border: 'none', borderRadius: 'var(--radius)', fontSize: 12, fontWeight: 700,
+                          cursor: 'pointer', fontFamily: "'Outfit', sans-serif"
+                        }}>⬇ Download Original File</button>
+                        <button onClick={() => {
+                          const el = document.getElementById(`artifact-${doc.id}`)
+                          if (!el) return
+                          const printWin = window.open('', '_blank')
+                          printWin.document.write(`
+                            <html><head><title>${doc.original_filename} - OCTAL EHR Artifact</title>
+                            <style>
+                              body { font-family: 'Segoe UI', sans-serif; padding: 32px; color: #1a1a1a; max-width: 700px; margin: 0 auto; }
+                              h1 { font-size: 20px; border-bottom: 2px solid #16a34a; padding-bottom: 8px; color: #16a34a; }
+                              .section-label { font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: 1px; color: #16a34a; margin-top: 16px; }
+                              .data-row { display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid #eee; font-size: 13px; }
+                              .data-key { color: #888; font-weight: 600; }
+                              .data-val { color: #1a1a1a; font-weight: 500; text-align: right; }
+                              .footer { margin-top: 32px; text-align: center; font-size: 11px; color: #aaa; border-top: 1px solid #eee; padding-top: 12px; }
+                            </style></head><body>
+                            <h1>Caleb University Medicals</h1>
+                            <p style="font-size:12px;color:#888;">Document Artifact: ${doc.original_filename}</p>
+                            ${el.innerHTML}
+                            <div class="footer">Printed on ${new Date().toLocaleDateString('en-NG', { year: 'numeric', month: 'long', day: 'numeric' })} · Powered by OCTAL</div>
+                            </body></html>
+                          `)
+                          printWin.document.close()
+                          printWin.print()
+                        }} style={{
+                          flex: 1, padding: '10px 16px', background: 'var(--surface)', color: 'var(--text)',
+                          border: '1.5px solid var(--border)', borderRadius: 'var(--radius)', fontSize: 12,
+                          fontWeight: 700, cursor: 'pointer', fontFamily: "'Outfit', sans-serif"
+                        }}>🖨 Print Artifact as PDF</button>
+                      </div>
+                    </div>
+                  )}
                 </div>
-                <span className="doc-item-dl" onClick={() => downloadDoc(doc)}>Download ↓</span>
-              </div>
-            ))
+              )
+            })
           )}
         </div>
 
@@ -502,6 +680,18 @@ export default function PatientView() {
 
 function DataRow({ label, value }) {
   const isNull = !value || value === 'null' || value === 'undefined'
+  return (
+    <div className="data-row">
+      <span className="data-key">{label}</span>
+      <span className={`data-val ${isNull ? 'data-val--null' : ''}`}>
+        {isNull ? '—' : String(value)}
+      </span>
+    </div>
+  )
+}
+
+function ArtifactRow({ label, value }) {
+  const isNull = !value || value === 'null' || value === 'undefined' || value === 'null'
   return (
     <div className="data-row">
       <span className="data-key">{label}</span>

@@ -301,37 +301,38 @@ export default function NewVisitForm({ studentId, onComplete, onCancel }) {
   const renderComplaint = () => (
     <>
       <h2 className="page-title" style={{ fontSize: 22 }}>Chief Complaint</h2>
-      <p className="page-desc">What is the student presenting with?</p>
+      <p className="page-desc">What is the student presenting with? Leave complaint blank for a general visit.</p>
 
       <div className="field">
-        <label>Complaint *</label>
+        <label>Complaint (optional)</label>
         <input
           type="text"
-          placeholder="e.g. Headache, fever, suspected malaria"
+          placeholder="e.g. Headache, fever, suspected malaria — leave blank for General Visit"
           value={complaint}
           onChange={e => setComplaint(e.target.value)}
         />
       </div>
 
       <div className="field">
-        <label>Clinical Notes (optional)</label>
+        <label>Clinical Notes *</label>
         <textarea
           style={{
-            width: '100%', minHeight: 100, border: '2px solid var(--border)',
+            width: '100%', minHeight: 100, border: `2px solid ${notes.trim() ? 'var(--green-light)' : 'var(--border)'}`,
             borderRadius: 'var(--radius)', padding: 16, fontFamily: "'Outfit', sans-serif",
             fontSize: 14, resize: 'vertical', outline: 'none', color: 'var(--text)'
           }}
-          placeholder="Additional observations, history of present illness..."
+          placeholder="Observations, history of present illness, reason for visit..."
           value={notes}
           onChange={e => setNotes(e.target.value)}
         />
+        {!notes.trim() && <div style={{ fontSize: 11, color: 'var(--alert)', marginTop: 4 }}>Notes are required for every visit</div>}
       </div>
 
       <div style={{ display: 'flex', gap: 12, marginTop: 24 }}>
-        <button className="btn-primary" onClick={() => setStep(1)}>
+        <button className="btn-primary" disabled={!notes.trim()} onClick={() => setStep(1)}>
           Next: Vitals →
         </button>
-        <button className="btn-primary" style={{ marginTop: 0, background: 'var(--green-light)' }} onClick={() => setStep(4)}>
+        <button className="btn-primary" disabled={!notes.trim()} style={{ marginTop: 0, background: 'var(--green-light)' }} onClick={() => setStep(4)}>
           Skip to Review →
         </button>
         <button className="btn-secondary" style={{ marginTop: 0 }} onClick={onCancel}>Cancel</button>
