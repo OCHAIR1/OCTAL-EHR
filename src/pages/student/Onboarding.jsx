@@ -462,7 +462,7 @@ export default function StudentOnboarding() {
         gender: personal?.gender || null,
         ndpr_consent: true,
         ndpr_consent_at: new Date().toISOString(),
-        ai_extraction_raw: extractionResult?.rawJson ? JSON.parse(extractionResult.rawJson) : null,
+        ai_extraction_raw: extractionResults[0]?.rawJson ? JSON.parse(extractionResults[0].rawJson) : null,
         profile_verified: true,
         profile_open: false  // auto-lock after submission
       }
