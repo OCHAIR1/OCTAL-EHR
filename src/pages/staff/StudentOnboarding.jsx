@@ -220,8 +220,8 @@ export default function StaffStudentOnboarding() {
 
         const userId = authData.user.id
 
-        // Create student row (empty profile, open for student to fill)
-        const { error: rowErr } = await supabase.from('students').insert({
+        // Create student row — use admin client to bypass RLS
+        const { error: rowErr } = await supabaseAdmin.from('students').insert({
           auth_user_id: userId,
           matric_no_hash: hash,
           matric_no_enc: matric,
