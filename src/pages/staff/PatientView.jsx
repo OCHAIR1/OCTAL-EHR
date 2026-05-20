@@ -540,34 +540,6 @@ export default function PatientView() {
                           border: 'none', borderRadius: 'var(--radius)', fontSize: 12, fontWeight: 700,
                           cursor: 'pointer', fontFamily: "'Outfit', sans-serif"
                         }}>⬇ Download Original File</button>
-                        <button onClick={() => {
-                          const el = document.getElementById(`artifact-${doc.id}`)
-                          if (!el) return
-                          const printWin = window.open('', '_blank')
-                          printWin.document.write(`
-                            <html><head><title>${doc.original_filename} - OCTAL EHR Artifact</title>
-                            <style>
-                              body { font-family: 'Segoe UI', sans-serif; padding: 32px; color: #1a1a1a; max-width: 700px; margin: 0 auto; }
-                              h1 { font-size: 20px; border-bottom: 2px solid #16a34a; padding-bottom: 8px; color: #16a34a; }
-                              .section-label { font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: 1px; color: #16a34a; margin-top: 16px; }
-                              .data-row { display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid #eee; font-size: 13px; }
-                              .data-key { color: #888; font-weight: 600; }
-                              .data-val { color: #1a1a1a; font-weight: 500; text-align: right; }
-                              .footer { margin-top: 32px; text-align: center; font-size: 11px; color: #aaa; border-top: 1px solid #eee; padding-top: 12px; }
-                            </style></head><body>
-                            <h1>Caleb University Medicals</h1>
-                            <p style="font-size:12px;color:#888;">Document Artifact: ${doc.original_filename}</p>
-                            ${el.innerHTML}
-                            <div class="footer">Printed on ${new Date().toLocaleDateString('en-NG', { year: 'numeric', month: 'long', day: 'numeric' })} · Powered by OCTAL</div>
-                            </body></html>
-                          `)
-                          printWin.document.close()
-                          printWin.print()
-                        }} style={{
-                          flex: 1, padding: '10px 16px', background: 'var(--surface)', color: 'var(--text)',
-                          border: '1.5px solid var(--border)', borderRadius: 'var(--radius)', fontSize: 12,
-                          fontWeight: 700, cursor: 'pointer', fontFamily: "'Outfit', sans-serif"
-                        }}>🖨 Print Artifact as PDF</button>
                       </div>
                     </div>
                   )}

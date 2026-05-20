@@ -446,7 +446,8 @@ export default function StudentOnboarding() {
             extractionResult: extractionResults[i] || null
           })
         } catch (uploadErr) {
-          console.warn(`R2 upload failed for ${f.name}, continuing:`, uploadErr.message)
+          console.warn(`R2 upload failed for ${f.name}:`, uploadErr)
+          throw new Error(`Failed to upload ${f.name} to secure storage: ${uploadErr.message}`)
         }
       }
 
@@ -528,12 +529,18 @@ export default function StudentOnboarding() {
       }
 
       // Insert document records for ALL uploaded files
+      const validDocTypes = ['medical_history_form', 'lab_result', 'doctor_letter', 'vaccination_record', 'other']
       for (const doc of uploadedDocs) {
         const exResult = doc.extractionResult
         const exData = exResult?.extracted
-        await supabaseAdmin.from('documents').insert({
+        let aiDocType = exData?.document_meta?.document_type?.toLowerCase() || 'other'
+        if (!validDocTypes.includes(aiDocType)) {
+          aiDocType = 'other'
+        }
+
+        const { error: docErr } = await supabaseAdmin.from('documents').insert({
           student_id: studentId,
-          document_type: exData?.document_meta?.document_type || 'other',
+          document_type: aiDocType,
           storage_path_enc: doc.storagePath,
           original_filename: doc.file.name,
           file_size_bytes: doc.file.size,
@@ -542,6 +549,7 @@ export default function StudentOnboarding() {
           ai_confidence: exData?.extraction_meta?.confidence || null,
           extraction_status: 'verified'
         })
+        if (docErr) throw docErr
       }
 
       // Audit log
