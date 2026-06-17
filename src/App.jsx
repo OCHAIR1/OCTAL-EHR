@@ -7,6 +7,7 @@ import StaffSearch from './pages/staff/Search'
 import PatientView from './pages/staff/PatientView'
 import StaffStudentOnboarding from './pages/staff/StudentOnboarding'
 import StaffLayout from './components/StaffLayout'
+import { StudentProtectedRoute, StaffProtectedRoute } from './components/ProtectedRoute'
 
 export default function App() {
   return (
@@ -17,14 +18,14 @@ export default function App() {
 
         {/* Student routes */}
         <Route path="/student/login" element={<StudentLogin />} />
-        <Route path="/student/onboarding" element={<StudentOnboarding />} />
-        <Route path="/student/dashboard" element={<StudentDashboard />} />
+        <Route path="/student/onboarding" element={<StudentProtectedRoute><StudentOnboarding /></StudentProtectedRoute>} />
+        <Route path="/student/dashboard" element={<StudentProtectedRoute><StudentDashboard /></StudentProtectedRoute>} />
 
         {/* Staff routes — wrapped with sidebar layout */}
         <Route path="/staff/login" element={<StaffLogin />} />
-        <Route path="/staff/search" element={<StaffLayout><StaffSearch /></StaffLayout>} />
-        <Route path="/staff/patient/:id" element={<StaffLayout><PatientView /></StaffLayout>} />
-        <Route path="/staff/register" element={<StaffLayout><StaffStudentOnboarding /></StaffLayout>} />
+        <Route path="/staff/search" element={<StaffProtectedRoute><StaffLayout><StaffSearch /></StaffLayout></StaffProtectedRoute>} />
+        <Route path="/staff/patient/:id" element={<StaffProtectedRoute><StaffLayout><PatientView /></StaffLayout></StaffProtectedRoute>} />
+        <Route path="/staff/register" element={<StaffProtectedRoute><StaffLayout><StaffStudentOnboarding /></StaffLayout></StaffProtectedRoute>} />
 
         {/* Fallback */}
         <Route path="*" element={<Navigate to="/student/login" replace />} />

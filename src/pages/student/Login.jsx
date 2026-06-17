@@ -98,14 +98,36 @@ export default function StudentLogin() {
       const email = await resolveEmail(identifier)
       await signIn(email, password)
 
-      // Check if student already has a completed profile
+      // Check user and role
       const { data: { user } } = await supabase.auth.getUser()
       if (user) {
+        // Enforce student role — block staff
+        if (user.user_metadata?.role === 'staff') {
+          await supabase.auth.signOut()
+          throw new Error('This login is only for students. Medical staff must use the Staff Portal.')
+        }
+
+        const { data: staffMember } = await supabase
+          .from('staff')
+          .select('id')
+          .eq('auth_user_id', user.id)
+          .maybeSingle()
+
+        if (staffMember) {
+          await supabase.auth.signOut()
+          throw new Error('This login is only for students. Medical staff must use the Staff Portal.')
+        }
+
         const { data: student } = await supabase
           .from('students')
           .select('id, profile_verified, profile_open')
           .eq('auth_user_id', user.id)
           .maybeSingle()
+
+        if (!student) {
+          await supabase.auth.signOut()
+          throw new Error('No student record found. Contact the health center to register.')
+        }
 
         if (student && student.profile_verified && !student.profile_open) {
           navigate('/student/dashboard')

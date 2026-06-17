@@ -58,6 +58,26 @@ export default function StaffLogin() {
         // ── ONLINE: authenticate with Supabase ──
         await signIn(email, password)
 
+        // Enforce staff role — block students
+        const { data: { user } } = await supabase.auth.getUser()
+        if (user) {
+          if (user.user_metadata?.role === 'student') {
+            await supabase.auth.signOut()
+            throw new Error('This portal is only for medical staff. Students must use the Student App.')
+          }
+
+          const { data: staffMember } = await supabase
+            .from('staff')
+            .select('id')
+            .eq('auth_user_id', user.id)
+            .maybeSingle()
+
+          if (!staffMember) {
+            await supabase.auth.signOut()
+            throw new Error('This portal is only for medical staff. Students must use the Student App.')
+          }
+        }
+
         // Cache credentials ONLY on Clinic PC
         if (isClinicPC()) {
           const credHash = await hashCredentials(email, password)
